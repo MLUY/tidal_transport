@@ -1,5 +1,10 @@
-# For all available configuration settings, please go to:
+# VIKTOR app configuration. All settings:
 #   https://docs.viktor.ai/docs/create-apps/references/viktor-config-toml
+#
+# Run locally (PyCharm terminal, in this folder):
+#   viktor-cli install     installs the packages of requirements.txt
+#   viktor-cli start       runs the app in your development workspace
+# registered_name must be exactly the name of the app created on the VIKTOR platform.
 
 app_type = 'tree'
 python_version = '3.13'
