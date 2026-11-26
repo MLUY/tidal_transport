@@ -8,4 +8,4 @@
 
 app_type = 'tree'
 python_version = '3.13'
-registered_name = 'tidal-transport-planner'
+registered_name = 'tidal-transport'
