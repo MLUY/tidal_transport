@@ -81,12 +81,7 @@ _DELIVERIES = """1 OSS 1520 06/03/2028 21/03/2028
 37 WTG-28 1250.9 31/08/2028 15/09/2028"""
 
 
-def _dmy(text: str) -> str:
-    d, m, y = text.split("/")
-    return f"{y}-{m}-{d}"
-
-
-DEFAULT_DELIVERIES = [dict(number=int(n), name=nm, weight_t=float(w), earliest=_dmy(e), latest=_dmy(la))
+DEFAULT_DELIVERIES = [dict(number=int(n), name=nm, weight_t=float(w), earliest=e, latest=la)
                       for n, nm, w, e, la in (line.split() for line in _DELIVERIES.splitlines())]
 
 
@@ -141,8 +136,9 @@ class Parametrization(vkt.Parametrization):
     input.deliveries.number = vkt.IntegerField("Load-out no.")
     input.deliveries.name = vkt.TextField("Location")
     input.deliveries.weight_t = vkt.NumberField("Weight", suffix="t")
-    input.deliveries.earliest = vkt.DateField("Earliest")
-    input.deliveries.latest = vkt.DateField("Latest")
+    # dates as text dd/mm/yyyy: VIKTOR does not allow date fields in a table
+    input.deliveries.earliest = vkt.TextField("Earliest (dd/mm/yyyy)")
+    input.deliveries.latest = vkt.TextField("Latest (dd/mm/yyyy)")
 
     input.planning_text = vkt.Text("### Planning")
     input.start_date = vkt.DateField("Barges available at the yard from", default=date(2028, 3, 6))
@@ -166,13 +162,20 @@ def _tide_bytes(params) -> bytes:
 
 
 def _to_date(v):
+    """Date from a date field or from text dd/mm/yyyy (also d-m-yyyy, d.m.yyyy or yyyy-mm-dd)."""
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
         return v
-    if isinstance(v, str) and v:
-        return date.fromisoformat(v[:10])
-    return None
+    text = str(v or "").strip()
+    if not text:
+        return None
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            pass
+    raise ValueError(text)
 
 
 def _cm(text, where: str):
@@ -219,7 +222,11 @@ def _inputs(params):
     for r in params.deliveries or []:
         if not (r.name or r.weight_t):
             continue
-        e, la = _to_date(r.earliest), _to_date(r.latest)
+        try:
+            e, la = _to_date(r.earliest), _to_date(r.latest)
+        except ValueError as exc:
+            raise vkt.UserError(f"Delivery schedule: monopile {r.number} ({r.name}): date '{exc}' is not "
+                                f"valid - use dd/mm/yyyy, e.g. 06/03/2028.")
         if e is None or la is None:
             raise vkt.UserError(f"Delivery schedule: monopile {r.number} ({r.name}) needs an earliest and latest date.")
         monopiles.append(Monopile(int(r.number or 0), str(r.name or ""), float(r.weight_t or 0), e, la))
