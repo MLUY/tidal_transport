@@ -62,7 +62,7 @@ user shall define a barge cycle per barge
 activity hr
 loading per monopile 24hr
 sailing 96hr
-discharging 2hr
+discharging per monopile 2hr
 
 discharging can only take place when tide is higher than indicated in the barge table
 if discharging cannot take place barge needs to wait until tide reaches the level
@@ -154,4 +154,4 @@ The tidal data is to be provided as per the file and setup in https://github.com
 output should be similar as per https://github.com/MLUY/tidal_transport
 
 gant planning chart
-cycle showing load-in only (as this is tidal data atthe load in port)
+cycle showing load-in only (as this is tidal data at the load in port)
