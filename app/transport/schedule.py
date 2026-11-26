@@ -16,6 +16,10 @@ Rules (first draft):
   above the required level for the whole discharging time.
   Required level: Single row for one monopile, Double row for two (heaviest class on board).
 * Load-out is late when loading is completed after the 'latest' date (end of that day).
+* Yard capacity (optional): at most N produced monopiles can be stored at the fabrication yard. Monopile k can
+  only be produced (become available) once monopile k - N has been loaded out; if that is later than its
+  earliest date, the fabricator is delayed (production delay).
+* The barges start at the yard at the start moment (e.g. once the first monopiles have been produced).
 """
 from __future__ import annotations
 
@@ -61,6 +65,13 @@ class Monopile:
     earliest: date
     latest: date
     cargo_class: str = ""
+    produced: datetime | None = None   # available at the yard (earliest date, later when the yard was full)
+    loaded_out: datetime | None = None
+
+    @property
+    def production_delay_h(self) -> float:
+        return max((self.produced - datetime.combine(self.earliest, datetime.min.time())).total_seconds() / 3600,
+                   0.0) if self.produced else 0.0
 
 
 @dataclass
@@ -91,6 +102,21 @@ class ScheduleResult:
     monopiles: list
     tide: TideCurve
     start: datetime
+    yard_capacity: int | None = None
+
+    @property
+    def production_delay_count(self) -> int:
+        return sum(m.production_delay_h > 1e-9 for m in self.monopiles)
+
+    def yard_stock(self) -> list:
+        """(time, number of monopiles stored at the yard) at every change: +1 produced, -1 loaded out."""
+        events = sorted([(m.produced, 1) for m in self.monopiles] + [(m.loaded_out, -1) for m in self.monopiles],
+                        key=lambda e: (e[0], e[1]))       # at the same moment: first load-out, then production
+        out, n = [], 0
+        for t, d in events:
+            n += d
+            out.append((t, n))
+        return out
 
     @property
     def finish(self) -> datetime:
@@ -144,11 +170,27 @@ def _heaviest(a: str, b: str, classes: list[CargoClass]) -> str:
 
 
 def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles: list[Monopile],
-                   tide: TideCurve, start: datetime, max_wait_second_h: float = 24.0) -> ScheduleResult:
+                   tide: TideCurve, start: datetime | None = None, max_wait_second_h: float = 24.0,
+                   yard_capacity: int | None = None, start_after_n: int = 1) -> ScheduleResult:
+    """start: moment the barges are at the yard; None = the earliest date of monopile number start_after_n
+    (in load-out order). yard_capacity: max. number of produced monopiles stored at the yard (None = no limit)."""
     validate(barges, classes, monopiles)
+    if yard_capacity is not None and yard_capacity < 1:
+        raise PlanningError("The yard capacity must be at least 1 monopile.")
     mps = sorted(monopiles, key=lambda m: m.number)
     for m in mps:
         m.cargo_class = classify(m.weight_t, classes)
+        m.produced = m.loaded_out = None
+    if start is None:
+        n = min(max(int(start_after_n), 1), len(mps))
+        start = datetime.combine(mps[n - 1].earliest, datetime.min.time())
+
+    def produced(k: int) -> datetime:
+        """Moment monopile k (index) is available: earliest date, or later when the yard is full."""
+        t = datetime.combine(mps[k].earliest, datetime.min.time())
+        if yard_capacity and k >= yard_capacity:
+            t = max(t, mps[k - yard_capacity].loaded_out)
+        return t
 
     # tide data repeated for every year so the schedule never runs out of data
     last = max(m.latest for m in mps)
@@ -167,7 +209,7 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
     i = 0
     while i < len(mps):
         mp = mps[i]
-        avail = datetime.combine(mp.earliest, datetime.min.time())
+        avail = mp.produced = produced(i)
         options = [b for b in barges if b.single_cm.get(mp.cargo_class) is not None]
         if not options:
             raise PlanningError(f"No barge may carry monopile {mp.number} ({mp.name}, {mp.weight_t:g} t, class "
@@ -180,7 +222,9 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
             cls = _heaviest(mp.cargo_class, nxt.cargo_class, classes)
             if b.double_cm.get(cls) is None:
                 return None
-            nxt_avail = datetime.combine(nxt.earliest, datetime.min.time())
+            if yard_capacity == 1:          # the next one can only be produced after this one is loaded out
+                return None
+            nxt_avail = produced(i + 1)
             if nxt_avail > load_start + timedelta(hours=b.loading_h + max_wait_second_h):
                 return None
             # only when the tide reaches the (higher) Double level within the search period
@@ -208,15 +252,16 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
         mp_wait = 0.0
         loaded = [mp]
         loaded_out = {mp.number: load_end}          # load-out completed per monopile
+        mp.loaded_out = load_end
         if nxt is not None:
-            nxt_avail = datetime.combine(nxt.earliest, datetime.min.time())
+            nxt_avail = nxt.produced = produced(i + 1)
             t2 = max(load_end, nxt_avail)
             mp_wait = (t2 - load_end).total_seconds() / 3600
             seg(best.name, CAT_WAIT_MP, load_end, t2, label, f"Waiting for {nxt.name} at the yard")
             load_end = t2 + timedelta(hours=best.loading_h)
             seg(best.name, CAT_LOAD, t2, load_end, label, f"Loading {nxt.name} ({nxt.weight_t:g} t)")
             loaded.append(nxt)
-            loaded_out[nxt.number] = load_end
+            loaded_out[nxt.number] = nxt.loaded_out = load_end
             cls = _heaviest(mp.cargo_class, nxt.cargo_class, classes)
             mode, required = DOUBLE, best.double_cm[cls]
         else:
@@ -249,4 +294,5 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
                           mp_wait_h=mp_wait, late=late, loaded_out=loaded_out))
         i += len(loaded)
 
-    return ScheduleResult(trips=trips, segments=segments, barges=barges, monopiles=mps, tide=tide, start=start)
+    return ScheduleResult(trips=trips, segments=segments, barges=barges, monopiles=mps, tide=tide, start=start,
+                          yard_capacity=yard_capacity)
