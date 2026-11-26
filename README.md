@@ -13,7 +13,8 @@ port (load-in). Structure, tide file format and tide handling follow the Tide Pl
 - **Tide restrictions matrix**: minimum tide level (cm) for discharging, per barge and per class.
   Single row for every barge, Double row for Double barges (class of the heaviest monopile counts).
   `x` = not permitted. Columns 1-6 = 1st-6th cargo class.
-- **Delivery schedule**: load-out no., location, weight, earliest and latest load-out date (37 monopiles).
+- **Delivery schedule**: load-out no., location, weight, earliest and latest load-out date as dd/mm/yyyy
+  (text: VIKTOR does not allow date fields in a table) - 37 monopiles.
 - **Planning**: date the barges are available at the yard; max. wait of a Double barge for the 2nd monopile.
 - **Tide**: csv (date-time, tide in cm above CD); default Gunsan 2026 hourly, repeated for other years.
 
