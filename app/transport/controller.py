@@ -85,6 +85,20 @@ DEFAULT_DELIVERIES = [dict(number=int(n), name=nm, weight_t=float(w), earliest=e
                       for n, nm, w, e, la in (line.split() for line in _DELIVERIES.splitlines())]
 
 
+def _start_text(params, **kwargs) -> str:
+    """Start of transport for the input screen (earliest date of the n-th monopile)."""
+    p = params.input if "input" in params else params
+    rows = sorted([r for r in (p.deliveries or []) if r.name or r.weight_t], key=lambda r: int(r.number or 0))
+    if not rows:
+        return "-"
+    n = min(max(int(p.start_after or 1), 1), len(rows))
+    try:
+        d = _to_date(rows[n - 1].earliest)
+    except ValueError:
+        return "-"
+    return f"{d:%d/%m/%Y} (earliest date of monopile {rows[n - 1].number} {rows[n - 1].name or ''})".strip()
+
+
 # ---------------------------------------------------------------- parametrization
 class Parametrization(vkt.Parametrization):
     input = vkt.Tab("Input")
@@ -141,7 +155,13 @@ class Parametrization(vkt.Parametrization):
     input.deliveries.latest = vkt.TextField("Latest (dd/mm/yyyy)")
 
     input.planning_text = vkt.Text("### Planning")
-    input.start_date = vkt.DateField("Barges available at the yard from", default=date(2028, 3, 6))
+    input.yard_capacity = vkt.IntegerField("Fabrication yard capacity", suffix="monopiles", default=6, min=1,
+                                           flex=50, description="Max. number of produced monopiles stored at the "
+                                                                "yard. When full, production waits for a load-out.")
+    input.start_after = vkt.IntegerField("Barges start when produced", suffix="monopiles", default=2, min=1,
+                                         flex=50, description="The barges start at the yard on the earliest date of "
+                                                              "this monopile (load-out order).")
+    input.start_info = vkt.OutputField("Start of transport", value=_start_text, flex=100)
     input.max_wait_second = vkt.NumberField("Double barge: max. wait for the second monopile", suffix="h",
                                             default=24, min=0,
                                             description="A Double barge waits at most this long (after loading "
@@ -243,14 +263,13 @@ def _schedule(params):
     if key not in _CACHE:
         if len(_CACHE) > 20:
             _CACHE.clear()
-        if not params.start_date:
-            raise vkt.UserError("Please fill in the date from which the barges are available.")
         barges, classes, monopiles = _inputs(params)
         try:
             tide = load_tide(data)
             _CACHE[key] = plan_transport(barges=barges, classes=classes, monopiles=monopiles, tide=tide,
-                                         start=datetime.combine(_to_date(params.start_date), datetime.min.time()),
-                                         max_wait_second_h=float(params.max_wait_second or 0))
+                                         max_wait_second_h=float(params.max_wait_second or 0),
+                                         yard_capacity=int(params.yard_capacity) if params.yard_capacity else None,
+                                         start_after_n=int(params.start_after or 1))
         except PlanningError as exc:
             raise vkt.UserError(str(exc))
     return _CACHE[key]
@@ -261,6 +280,8 @@ def _summary(res) -> str:
     n_double = sum(t.mode == DOUBLE for t in res.trips)
     late = f" | <span style='color:#d62728'>{res.late_count} late load-out(s)</span>" if res.late_count else \
         " | all load-outs on time"
+    if res.production_delay_count:
+        late += (f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>")
     return (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
             f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y} | "
             f"tidal wait {res.total_tidal_wait_h:.0f} h{late}")
@@ -345,23 +366,52 @@ def build_table(res) -> go.Figure:
     for t in res.trips:
         for m in t.monopiles:
             by_mp[m.number] = t
-    header = ["No.", "Location", "Weight (t)", "Class", "Earliest", "Latest", "Barge / trip", "Transport",
+    header = ["No.", "Location", "Weight (t)", "Class", "Earliest", "Latest", "Produced", "Barge / trip", "Transport",
               "Load-out done", "Arrival port", "Required tide (cm)", "Tidal wait (h)", "Load-in", "On time"]
     rows = []
     for m in res.monopiles:
         t = by_mp[m.number]
         rows.append([m.number, m.name, f"{m.weight_t:g}", m.cargo_class, f"{m.earliest:%d-%m-%Y}",
-                     f"{m.latest:%d-%m-%Y}", f"{t.barge} / {t.trip_no}", t.mode,
+                     f"{m.latest:%d-%m-%Y}",
+                     f"{m.produced:%d-%m-%Y %H:%M}" + (f" (+{m.production_delay_h:.0f} h)" if m.production_delay_h > 1e-9
+                                                       else ""),
+                     f"{t.barge} / {t.trip_no}", t.mode,
                      f"{t.loaded_out[m.number]:%d-%m-%Y %H:%M}", f"{t.arrival:%d-%m-%Y %H:%M}",
                      f"{t.required_cm:.0f}", f"{t.tidal_wait_h:.1f}", f"{t.discharge_start:%d-%m-%Y %H:%M}",
                      "LATE" if m.number in t.late else "yes"])
     cols = list(map(list, zip(*rows)))
-    late_color = ["#f8d0d0" if r[-1] == "LATE" else "white" for r in rows]
+    late_color = ["#f8d0d0" if r[-1] == "LATE" or "(+" in r[6] else "white" for r in rows]
     fig = go.Figure(go.Table(header=dict(values=header, align="left", fill_color="#e6e6e6"),
                              cells=dict(values=cols, align="left", fill_color=[late_color] * len(header))))
     per_barge = " | ".join(f"{b.name}: {sum(t.barge == b.name for t in res.trips)} trips" for b in res.barges)
     _layout_title(fig, ["<b>Monopile schedule</b>", f"{_summary(res)}<br>{per_barge}"], 800)
     fig.update_layout(margin=dict(t=95, l=10, r=10))
+    return fig
+
+
+def build_yard(res) -> go.Figure:
+    """Number of produced monopiles stored at the fabrication yard over time, with the yard capacity."""
+    stock = res.yard_stock()
+    fig = go.Figure(go.Scatter(x=[t for t, _ in stock], y=[n for _, n in stock], mode="lines", line_shape="hv",
+                               name="Monopiles at the yard", line=dict(color="#1f77b4", width=2),
+                               fill="tozeroy", fillcolor="rgba(31,119,180,0.15)"))
+    if res.yard_capacity:
+        fig.add_hline(y=res.yard_capacity, line=dict(color="#d62728", dash="dash"),
+                      annotation_text=f"Yard capacity {res.yard_capacity}", annotation_position="top left")
+    delayed = [m for m in res.monopiles if m.production_delay_h > 1e-9]
+    if delayed:
+        fig.add_trace(go.Scatter(
+            x=[m.produced for m in delayed], y=[res.yard_capacity] * len(delayed), mode="markers",
+            name="Production delayed (yard full)", marker=dict(symbol="x", size=10, color="#d62728"),
+            text=[f"{m.number} {m.name}: earliest {m.earliest:%d-%m-%Y}, produced {m.produced:%d-%m-%Y %H:%M} "
+                  f"(+{m.production_delay_h:.0f} h)" for m in delayed], hoverinfo="text"))
+    peak = max(n for _, n in stock)
+    _layout_title(fig, ["<b>Fabrication yard stock</b>",
+                        f"Max. {peak} monopiles stored" + (f" (capacity {res.yard_capacity})" if res.yard_capacity
+                                                           else "") +
+                        f" | {res.production_delay_count} production delay(s) | barges start {res.start:%d %b %Y}"], 520)
+    fig.update_yaxes(title_text="Monopiles at the yard", dtick=1, rangemode="tozero")
+    fig.update_layout(margin=dict(t=80), hovermode="x unified")
     return fig
 
 
@@ -388,6 +438,10 @@ class TransportPlan(vkt.Controller):
     @vkt.PlotlyView("Load-in", duration_guess=1)
     def loadin_view(self, params, **kwargs):
         return vkt.PlotlyResult(build_loadin(_schedule(params.input)).to_json())
+
+    @vkt.PlotlyView("Yard", duration_guess=1)
+    def yard_view(self, params, **kwargs):
+        return vkt.PlotlyResult(build_yard(_schedule(params.input)).to_json())
 
     @vkt.PlotlyView("Table", duration_guess=1)
     def table_view(self, params, **kwargs):

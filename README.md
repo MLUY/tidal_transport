@@ -15,7 +15,9 @@ port (load-in). Structure, tide file format and tide handling follow the Tide Pl
   `x` = not permitted. Columns 1-6 = 1st-6th cargo class.
 - **Delivery schedule**: load-out no., location, weight, earliest and latest load-out date as dd/mm/yyyy
   (text: VIKTOR does not allow date fields in a table) - 37 monopiles.
-- **Planning**: date the barges are available at the yard; max. wait of a Double barge for the 2nd monopile.
+- **Planning**: fabrication yard capacity (default 6 stored monopiles); the barges start at the yard once this
+  number of monopiles is produced (default 2, i.e. the earliest date of monopile 2 - shown as *Start of
+  transport*); max. wait of a Double barge for the 2nd monopile.
 - **Tide**: csv (date-time, tide in cm above CD); default Gunsan 2026 hourly, repeated for other years.
 
 ## Scheduling rules (first draft)
@@ -27,10 +29,14 @@ port (load-in). Structure, tide file format and tide handling follow the Tide Pl
    required level for the whole discharging time;
    otherwise the barge waits at the marshalling port.
 5. A load-out completed after the 'latest' date (end of day) is marked LATE.
+6. Yard capacity: monopile k can only be produced once monopile k - capacity has been loaded out. If that is
+   later than its earliest date, the fabricator is delayed (production delay, marked in the table).
 
 ## Results
 - **Planning**: Gantt per barge (loading, waiting for monopile, sailing, tidal wait, discharging, sailing back).
 - **Load-in**: tide at the marshalling port with the required level and load-in moment of every trip;
   below the tidal waits and discharging per barge.
+- **Yard**: number of monopiles stored at the fabrication yard over time, with the capacity and the
+  production delays.
 - **Table**: per monopile: class, barge/trip, single/double, load-out, arrival, required tide, tidal wait,
   load-in, on time.
