@@ -12,7 +12,8 @@ Rules (first draft):
   after arrival (otherwise the barge sails with one monopile).
 * Barge cycle: loading (per monopile) -> sailing to the marshalling port -> waiting for the tide ->
   discharging -> sailing back to the yard.
-* Discharging needs the tide at or above the required level for the whole discharging time.
+* Discharging takes the discharging time per monopile (2 monopiles = twice as long) and needs the tide at or
+  above the required level for the whole discharging time.
   Required level: Single row for one monopile, Double row for two (heaviest class on board).
 * Load-out is late when loading is completed after the 'latest' date (end of that day).
 """
@@ -46,7 +47,7 @@ class Barge:
     configuration: str                 # Single / Double
     loading_h: float                   # per monopile
     sailing_h: float                   # yard -> marshalling port
-    discharging_h: float               # per trip
+    discharging_h: float               # per monopile
     return_h: float                    # marshalling port -> yard
     single_cm: dict = field(default_factory=dict)   # class name -> required tide (cm), None = not permitted
     double_cm: dict = field(default_factory=dict)
@@ -186,7 +187,7 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
             arrive = (max(load_start + timedelta(hours=b.loading_h), nxt_avail)
                       + timedelta(hours=b.loading_h + b.sailing_h))
             try:
-                wait_for_gate(tide, arrive, GateRule(b.double_cm[cls], b.double_cm[cls], b.discharging_h))
+                wait_for_gate(tide, arrive, GateRule(b.double_cm[cls], b.double_cm[cls], 2 * b.discharging_h))
             except PlanningError:
                 return None
             except DataEnd:
@@ -224,14 +225,15 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
 
         arrival = load_end + timedelta(hours=best.sailing_h)
         seg(best.name, CAT_SAIL, load_end, arrival, label, f"Sailing to the marshalling port ({mode.lower()})")
-        rule = GateRule(rising_cm=required, falling_cm=required, transit_h=best.discharging_h)
+        discharge_h = best.discharging_h * len(loaded)          # per monopile
+        rule = GateRule(rising_cm=required, falling_cm=required, transit_h=discharge_h)
         try:
             wait = wait_for_gate(tide, arrival, rule)
         except DataEnd:
             raise PlanningError(f"{label}: the schedule runs past the end of the tidal data ({tide.end:%Y-%m-%d}). "
                                 f"Upload tidal data covering the period, or at least one full year.")
         d0 = arrival + timedelta(hours=wait)
-        d1 = d0 + timedelta(hours=best.discharging_h)
+        d1 = d0 + timedelta(hours=discharge_h)
         seg(best.name, CAT_TIDE, arrival, d0, label, f"Waiting for tide >= {required:.0f} cm")
         seg(best.name, CAT_DISCHARGE, d0, d1, label,
             f"Load-in {' + '.join(m.name for m in loaded)} (tide >= {required:.0f} cm)")

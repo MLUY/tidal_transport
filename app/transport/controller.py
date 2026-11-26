@@ -115,13 +115,13 @@ class Parametrization(vkt.Parametrization):
     input.classes.to_t = vkt.NumberField("To weight", suffix="t")
 
     input.cycle_text = vkt.Text("### Barge cycle\n*Per barge: loading per monopile at the fabrication yard, "
-                                "sailing to the marshalling port, discharging (load-in, only when the tide is at "
+                                "sailing to the marshalling port, discharging per monopile (load-in, only when the tide is at "
                                 "or above the required level) and sailing back to the yard.*")
     input.cycle = vkt.Table("Barge cycle", default=[dict(name=b["name"], **DEFAULT_CYCLE) for b in DEFAULT_BARGES])
     input.cycle.name = vkt.TextField("Barge")
     input.cycle.loading_h = vkt.NumberField("Loading per monopile", suffix="h")
     input.cycle.sailing_h = vkt.NumberField("Sailing to port", suffix="h")
-    input.cycle.discharging_h = vkt.NumberField("Discharging", suffix="h")
+    input.cycle.discharging_h = vkt.NumberField("Discharging per monopile", suffix="h")
     input.cycle.return_h = vkt.NumberField("Sailing back", suffix="h")
 
     input.matrix_text = vkt.Text(
