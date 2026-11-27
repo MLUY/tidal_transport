@@ -33,9 +33,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
    monopile k - capacity has been loaded out = production delay).
 3. A Double barge takes the next monopile too when the Double column permits it and it is ready within the
    max. wait.
-4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure, a
-   marshalling port berth from the port entry until the port departure (so also while waiting for the tide).
-   When all berths are taken the barge waits.
+4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure (barges wait
+   when all are taken). A marshalling port berth is only occupied during a load-in: a barge waiting for the tide
+   does not block it. If the tide is right but all berths are used by other barges loading-in, the barge waits
+   for the next suitable tide with a free berth (*Waiting for berth (other barge loading-in)*).
 5. Load-in starts on a rising tide and the tide stays at or above the level of the load configuration for the
    whole load-in (Double level with two monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
    the remaining monopile.

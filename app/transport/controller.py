@@ -256,6 +256,8 @@ class Parametrization(vkt.Parametrization):
     port = vkt.Tab("Marshalling port")
     port.port_text = vkt.Text("### Marshalling port")
     port.port_berths = vkt.IntegerField("Number of load-in berths available", default=1, min=1)
+    port.berth_note = vkt.Text("*A load-in berth is only occupied during a load-in. Barges waiting for the tide do "
+                               "not block a berth; a barge only waits for a berth when another barge is loading-in.*")
     port.tide_text = vkt.Text("### Tide at the marshalling port")
     port.tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
     port.tide_note = vkt.Text("*File format: .csv, comma separated, header row, then one row per time (e.g. "
@@ -827,7 +829,9 @@ class TransportPlan(vkt.Controller):
         starts = [dict(name=b.name, start=f"{b.start:%d/%m/%Y}") for b in best]
         gain = (first.finish - res.finish).total_seconds() / 86400 if first is not None else 0.0
         text = (f"Last load-in {res.finish:%d/%m/%Y %H:%M}" +
-                (f" ({gain:.1f} days earlier than before)" if gain > 0.01 else " (no earlier end date found)") +
+                (f" ({gain:.1f} days earlier than before)" if gain > 0.01 else
+                 " (same end date, less waiting)" if [b.start for b in best] != [b.start for b in barges] else
+                 " (no better start dates found)") +
                 " | " + ", ".join(f"{b.name} {b.start:%d/%m/%Y}" for b in best))
         return vkt.SetParamsResult({"planning": {"starts": starts, "optimise_result": text}})
 
