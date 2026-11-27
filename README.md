@@ -9,10 +9,11 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   MP 24 h, port departure fabricator 3 h, port entry 3 h, load-in per MP 3 h, general load-in time allowance
   21 h, port departure 6 h. After changing barges or cargo classes press **Update tide matrix and barge start
   tables**.
-- **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns =
-  barges b1, b2, ... (1st, 2nd, ... barge of the fleet), first the Single configuration, then the Double
-  configuration (level for the heaviest monopile on
-  board; `x` = not possible). The line *Columns* shows which barge each column is.
+- **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns
+  sb1, sb2, ... = all barges in the Single configuration, then db1, db2, ... = the Double barges in the Double
+  configuration (level for the heaviest monopile on board; `x` = not possible). The line *Columns* shows which
+  barge each column is. Only columns of defined barges are shown (VIKTOR cannot hide table columns, so there is
+  one table per fleet composition and only the matching one is visible).
 - **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
 - **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
@@ -32,6 +33,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
    monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
    the remaining monopile.
 6. After the last load-in: general load-in time allowance, port departure, sailing back.
+7. A barge back at the fabricator with no monopile ready is shown as *Waiting for fabricator* (no gaps in
+   the Gantt chart).
 
 ## Results
 - **Planning**: Gantt per barge with all activities and waits.
@@ -39,6 +42,7 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
   barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
   move to a date, drag in the graph to zoom (also the y-axis), double-click to reset.
-- **Yard**: monopiles stored at the fabrication yard vs. the storage capacity, production delays.
+- **Stock**: monopiles at the fabricator (with storage capacity and production delays), on the barges and
+  delivered at the marshalling port over time.
 - **Table**: per monopile: class, ready / produced, barge / trip, single / double, load-out, arrival, load-in,
   required tide, tidal wait.
