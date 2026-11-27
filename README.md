@@ -44,7 +44,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
    the Gantt chart).
 
 ## Results
-- **Planning**: Gantt per barge with all activities and waits, or (tab Planning, *Planning chart* = Detail of one
+- **Planning**: Gantt per barge with all activities and waits, or *Barge cycles*: one bar per trip split into its
+  activities, all starting at 0, with the total cycle duration (and dashed lines for a cycle without waiting), or (tab Planning, *Planning chart* = Detail of one
   trip) one barge trip: tidal curve with the required level per barge configuration, green where the tide stays
   at or above that level for at least the load-in duration (load-in possible), grey where it is too short, the
   load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the

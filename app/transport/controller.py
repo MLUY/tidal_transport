@@ -142,7 +142,7 @@ def _sailing_text(params, **kwargs) -> str:
     return f"{hrs:.1f} h ({hrs / 24:.1f} days) each way"
 
 
-CHART_ALL, CHART_DETAIL = "Complete project", "Detail of one trip"
+CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
 OPT_RANGE_DAYS = 30
 UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result"}      # display choices: no new calculation
 
@@ -296,7 +296,7 @@ class Parametrization(vkt.Parametrization):
         "monopile. Only when the Double configuration is allowed for the combination (db column, not 'x').*")
 
     planning.chart_text = vkt.Text("### Planning chart")
-    planning.chart_mode = vkt.OptionField("Show", options=[CHART_ALL, CHART_DETAIL], default=CHART_ALL,
+    planning.chart_mode = vkt.OptionField("Show", options=[CHART_ALL, CHART_CYCLES, CHART_DETAIL], default=CHART_ALL,
                                           variant="radio-inline", flex=100)
     planning.detail_barge = vkt.OptionField("Barge", options=_barge_options, flex=50,
                                             visible=vkt.IsEqual(vkt.Lookup("planning.chart_mode"), CHART_DETAIL))
@@ -712,6 +712,62 @@ def build_detail(res, barge: str, trip_no: int) -> dict:
     return fig_dict
 
 
+def build_cycles(res) -> go.Figure:
+    """Barge cycles: one horizontal bar per trip (cycle = from the end of the previous trip back at the fabricator
+    until back at the fabricator again), split into its activities, all starting at 0 so that the cycle durations
+    can be compared. Total duration at the end of every bar; dashed lines: cycle without any waiting."""
+    labels, rows = [], []
+    for b in res.barges:
+        for t in [t for t in res.trips if t.barge == b.name]:
+            label = f"{t.barge} trip {t.trip_no}"
+            segs = sorted([s for s in res.segments if s["trip"] == label], key=lambda s: s["start"])
+            if not segs:
+                continue
+            t0 = segs[0]["start"]
+            labels.append(label)
+            rows.append((label, t, t0, segs))
+    fig = go.Figure()
+    for cat, color in COLORS.items():
+        xs, bases, ys, hov = [], [], [], []
+        for label, t, t0, segs in rows:
+            for s in segs:
+                if s["category"] != cat:
+                    continue
+                d = (s["finish"] - s["start"]).total_seconds() / 86400
+                bases.append((s["start"] - t0).total_seconds() / 86400)
+                xs.append(d)
+                ys.append(label)
+                hov.append(f"{_trip_text(t)}<br>{cat}: {s['detail']}<br>{s['start']:%d-%m %H:%M} - "
+                           f"{s['finish']:%d-%m %H:%M} ({d * 24:.1f} h)")
+        if xs:
+            fig.add_trace(go.Bar(x=xs, base=bases, y=ys, orientation="h", name=cat, marker_color=color,
+                                 hoverinfo="text", hovertext=hov))
+    totals = [((segs[-1]["finish"] - t0).total_seconds() / 86400, label, t) for label, t, t0, segs in rows]
+    fig.add_trace(go.Scatter(x=[d for d, _, _ in totals], y=[lab for _, lab, _ in totals], mode="text",
+                             text=[f"  {d:.1f} d ({t.mode.lower()})" for d, _, t in totals], textposition="middle right",
+                             showlegend=False, hoverinfo="skip"))
+    c = res.cycle
+    nominal = {SINGLE: c.loadout_h + c.dep_fab_h + 2 * c.sailing_h + c.entry_h + c.loadin_h + c.allowance_h + c.dep_h}
+    nominal[DOUBLE] = nominal[SINGLE] + c.loadout_h + c.loadin_h
+    for mode, dash, pos in ((SINGLE, "dash", "top left"), (DOUBLE, "dot", "top right")):
+        if any(t.mode == mode for _, _, t in totals):
+            fig.add_vline(x=nominal[mode] / 24, line=dict(color="#555", dash=dash),
+                          annotation_text=f"{mode} without waiting {nominal[mode] / 24:.1f} d",
+                          annotation_position=pos)
+    days = [d for d, _, _ in totals]
+    n = len(labels)
+    height = max(520, 22 * n + 190)
+    _layout_title(fig, ["<b>Barge cycles</b>",
+                        f"{n} trips | cycle duration average {np.mean(days):.1f} d, shortest {min(days):.1f} d, "
+                        f"longest {max(days):.1f} d<br><sup>Cycle = from back at the fabricator (end of the previous "
+                        f"trip, or the barge start) until back at the fabricator. Dashed lines: cycle without any "
+                        f"waiting.</sup>"], height)
+    fig.update_yaxes(categoryorder="array", categoryarray=labels[::-1], title_text="")
+    fig.update_xaxes(title_text="Days from the start of the cycle", range=[0, max(days) * 1.18])
+    fig.update_layout(barmode="overlay", bargap=0.25, margin=dict(t=115, l=110), hovermode="closest")
+    return fig
+
+
 def build_stock(res) -> go.Figure:
     """Stock curves: monopiles at the fabricator (with the storage capacity) and on the barges (top), and
     monopiles delivered at the marshalling port (bottom)."""
@@ -799,6 +855,8 @@ class TransportPlan(vkt.Controller):
     def planning_view(self, params, **kwargs):
         res = _schedule(params)
         plan = params.planning or {}
+        if plan.get("chart_mode") == CHART_CYCLES:
+            return vkt.PlotlyResult(build_cycles(res).to_json())
         if plan.get("chart_mode") == CHART_DETAIL:
             barge = plan.get("detail_barge") or res.barges[0].name
             return vkt.PlotlyResult(build_detail(res, barge, _trip_number(plan.get("detail_trip"))))
