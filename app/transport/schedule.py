@@ -50,7 +50,10 @@ CAT_LOADIN = "Load-in"
 CAT_ALLOW = "Load-in time allowance"
 CAT_DEP = "Port departure"
 CAT_RETURN = "Sailing back"
-CATEGORIES = [CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_LOAD, CAT_WAIT_MP, CAT_DEP_FAB, CAT_SAIL, CAT_BERTH_MP, CAT_ENTRY, CAT_TIDE,
+CAT_WEATHER = "Weather downtime"
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+DEFAULT_WORKABILITY = [60, 65, 75, 80, 85, 90, 90, 90, 85, 75, 65, 50]     # % per month, Jan ... Dec
+CATEGORIES = [CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_LOAD, CAT_WAIT_MP, CAT_DEP_FAB, CAT_WEATHER, CAT_SAIL, CAT_BERTH_MP, CAT_ENTRY, CAT_TIDE,
               CAT_LOADIN, CAT_ALLOW, CAT_DEP, CAT_RETURN]
 
 
@@ -122,6 +125,7 @@ class Trip:
     berth_wait_fab_h: float
     berth_wait_port_h: float
     mp_wait_h: float
+    weather_h: float = 0.0             # weather downtime on both sailing legs
 
     @property
     def tidal_wait_h(self) -> float:
@@ -149,6 +153,10 @@ class ScheduleResult:
     @property
     def total_tidal_wait_h(self) -> float:
         return sum(t.tidal_wait_h for t in self.trips)
+
+    @property
+    def total_weather_h(self) -> float:
+        return sum(t.weather_h for t in self.trips)
 
     @property
     def total_berth_wait_h(self) -> float:
@@ -264,8 +272,21 @@ def _next_low_water(tide: TideCurve, t: datetime) -> datetime:
 
 def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles: list[Monopile], tide: TideCurve,
                    cycle: Cycle, yard_capacity: int | None = 6, fab_berths: int = 1, port_berths: int = 1,
-                   ready: str = READY_EARLIEST, max_wait_second_h: float = 24.0) -> ScheduleResult:
+                   ready: str = READY_EARLIEST, max_wait_second_h: float = 24.0,
+                   workability: list | None = None) -> ScheduleResult:
+    """workability: weather workability (%) per month Jan ... Dec for the sailing legs. Weather downtime of a leg =
+    sailing time x (100 / workability of the month in which the leg starts - 1), added before the sailing.
+    None = no weather downtime."""
     _validate(barges, classes, monopiles, cycle)
+    if workability is not None:
+        if len(workability) != 12 or any(p is None or not 0 < p <= 100 for p in workability):
+            raise PlanningError("Weather: the workability per month must be more than 0 and at most 100 %.")
+
+    def weather_h(t: datetime) -> float:
+        if workability is None:
+            return 0.0
+        pct = workability[t.month - 1]
+        return cycle.sailing_h * (100.0 / pct - 1.0)
     if yard_capacity is not None and yard_capacity < 1:
         raise PlanningError("The fabrication yard storage capacity must be at least 1 monopile.")
     if fab_berths < 1 or port_berths < 1:
@@ -365,8 +386,13 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
         fab_free[k_berth] = t                                    # berth free at the start of the port departure
         dep_fab = t + h(cycle.dep_fab_h)
         seg(best.name, CAT_DEP_FAB, t, dep_fab, label, "Port departure fabricator")
-        arrival = dep_fab + h(cycle.sailing_h)
-        seg(best.name, CAT_SAIL, dep_fab, arrival, label,
+        w_out = weather_h(dep_fab)
+        sail0 = dep_fab + h(w_out)
+        seg(best.name, CAT_WEATHER, dep_fab, sail0, label,
+            f"Weather downtime before towing to the marshalling port ({MONTHS[dep_fab.month - 1]} workability "
+            f"{workability[dep_fab.month - 1] if workability else 100:g} %)")
+        arrival = sail0 + h(cycle.sailing_h)
+        seg(best.name, CAT_SAIL, sail0, arrival, label,
             f"Towing {cycle.distance_nm:g} nm at {cycle.speed_kn:g} kn ({mode.lower()})")
 
         # marshalling port: wait for a free berth outside, then port entry
@@ -401,14 +427,19 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
         port_free[k_port] = allow_end                             # berth free at the start of the port departure
         dep_end = allow_end + h(cycle.dep_h)
         seg(best.name, CAT_DEP, allow_end, dep_end, label, "Port departure marshalling port")
-        back = dep_end + h(cycle.sailing_h)
-        seg(best.name, CAT_RETURN, dep_end, back, label, "Towing back to the fabricator")
+        w_back = weather_h(dep_end)
+        sail1 = dep_end + h(w_back)
+        seg(best.name, CAT_WEATHER, dep_end, sail1, label,
+            f"Weather downtime before towing back ({MONTHS[dep_end.month - 1]} workability "
+            f"{workability[dep_end.month - 1] if workability else 100:g} %)")
+        back = sail1 + h(cycle.sailing_h)
+        seg(best.name, CAT_RETURN, sail1, back, label, "Towing back to the fabricator")
         free[best.name] = back
 
         trips.append(Trip(barge=best.name, trip_no=tno, monopiles=loaded, mode=mode, load_start=load_start,
                           departure_fab=dep_fab, arrival=arrival, loadins=loadins, finish_port=dep_end,
                           back_at_fab=back, berth_wait_fab_h=berth_wait_fab, berth_wait_port_h=berth_wait_port,
-                          mp_wait_h=mp_wait))
+                          mp_wait_h=mp_wait, weather_h=w_out + w_back))
         i += len(loaded)
 
     return ScheduleResult(trips=trips, segments=segments, barges=barges, monopiles=mps, tide=tide, cycle=cycle,

@@ -12,7 +12,8 @@ import viktor as vkt
 
 from .schedule import (CAT_ALLOW, CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_BERTH_MP, CAT_DEP, CAT_DEP_FAB, CAT_ENTRY, CAT_LOAD,
                        CAT_LOADIN, CAT_RETURN, CAT_SAIL, CAT_TIDE, CAT_WAIT_MP, DOUBLE, READY_EARLIEST, READY_LATEST,
-                       SINGLE, Barge, CargoClass, Cycle, Monopile, plan_transport)
+                       SINGLE, CAT_WEATHER, DEFAULT_WORKABILITY, MONTHS, Barge, CargoClass, Cycle, Monopile,
+                       plan_transport)
 from .tide import PlanningError, load_tide
 
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
@@ -20,10 +21,10 @@ MAX_BARGES = 6
 S_COLS = tuple(f"s{k}" for k in range(1, MAX_BARGES + 1))      # tide table: sb1 ... = 1st ... barge (Single)
 D_COLS = tuple(f"d{k}" for k in range(1, MAX_BARGES + 1))      # db1 ... = 1st ... Double barge (Double)
 NOT_ALLOWED = "x"
-TABS = ("input", "cargo", "fabricator", "port", "planning")
+TABS = ("input", "cargo", "fabricator", "port", "weather", "planning")
 
 COLORS = {CAT_WAIT_FAB: "#dbdb8d", CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_DEP_FAB: "#9467bd",
-          CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
+          CAT_WEATHER: "#17becf", CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
           CAT_LOADIN: "#2ca02c", CAT_ALLOW: "#98df8a", CAT_DEP: "#9467bd", CAT_RETURN: "#aec7e8"}
 
 DEFAULT_BARGES = [dict(name="b1", configuration=DOUBLE), dict(name="b2", configuration=DOUBLE),
@@ -260,6 +261,19 @@ class Parametrization(vkt.Parametrization):
                               "column 2 tide level in cm above chart datum (CD). The data of one year is repeated "
                               "for every other year (same calendar date and time).*")
 
+    # ---------------- Weather: monthly workability for the sailing legs
+    weather = vkt.Tab("Weather")
+    weather.text = vkt.Text(
+        "### Weather workability for sailing\n*Percentage of the time the weather allows towing, per month. It is "
+        "applied to both sailing legs (fabricator -> marshalling port and back): weather downtime = sailing time x "
+        "(100 / workability - 1), using the month in which the leg starts. Example: 87.5 h sailing in January (60 %) "
+        "gives 58.3 h weather downtime. 100 % = no weather downtime. Default values are reasonable starting "
+        "points; replace them by the metocean data of the route.*")
+    weather.workability = vkt.Table("Workability per month", default=[dict(month=m, pct=v) for m, v in
+                                                                      zip(MONTHS, DEFAULT_WORKABILITY)])
+    weather.workability.month = vkt.TextField("Month")
+    weather.workability.pct = vkt.NumberField("Workability", suffix="%")
+
     # ---------------- Planning: barge start dates
     planning = vkt.Tab("Planning")
     planning.start_text = vkt.Text("### Barge start\n*The barges are assumed to start at the fabricator yard on "
@@ -364,6 +378,19 @@ def _inputs(p):
     return barges, classes, monopiles, cycle
 
 
+def _workability(p) -> list:
+    rows = p.workability or []
+    if len(rows) != 12:
+        raise vkt.UserError("Weather: the workability table needs 12 rows (January ... December).")
+    out = []
+    for m, r in zip(MONTHS, rows):
+        v = r.pct
+        if v is None or not 0 < float(v) <= 100:
+            raise vkt.UserError(f"Weather: workability for {m} must be more than 0 and at most 100 %.")
+        out.append(float(v))
+    return out
+
+
 _CACHE: dict = {}
 
 
@@ -382,7 +409,8 @@ def _schedule(params):
                 barges=barges, classes=classes, monopiles=monopiles, tide=load_tide(data), cycle=cycle,
                 yard_capacity=int(p.yard_capacity) if p.yard_capacity else None,
                 fab_berths=int(p.fab_berths or 1), port_berths=int(p.port_berths or 1),
-                ready=p.ready or READY_EARLIEST, max_wait_second_h=float(p.max_wait_second or 0))
+                ready=p.ready or READY_EARLIEST, max_wait_second_h=float(p.max_wait_second or 0),
+                workability=_workability(p))
         except PlanningError as exc:
             raise vkt.UserError(str(exc))
     return _CACHE[key]
@@ -393,7 +421,7 @@ def _summary(res) -> str:
     n_double = sum(t.mode == DOUBLE for t in res.trips)
     txt = (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
            f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y} | tidal wait {res.total_tidal_wait_h:.0f} h"
-           f" | berth wait {res.total_berth_wait_h:.0f} h")
+           f" | berth wait {res.total_berth_wait_h:.0f} h | weather {res.total_weather_h:.0f} h")
     if res.production_delay_count:
         txt += f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>"
     return txt
