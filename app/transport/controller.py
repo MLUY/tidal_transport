@@ -576,7 +576,10 @@ def build_tide(res) -> dict:
     _layout_title(fig, ["<b>Tide at the marshalling port and barge activities</b>",
                         f"{n} load-ins | tidal wait {res.total_tidal_wait_h:.0f} h "
                         f"(average {res.total_tidal_wait_h / n:.1f} h per load-in)<br><sup>{small}</sup>"], 720)
-    fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=125, l=70), dragmode="zoom")
+    # legend horizontally under the chart (below the range slider), so the graph uses the full width
+    fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=125, l=70, r=20, b=120), dragmode="zoom",
+                      legend=dict(orientation="h", x=0, xanchor="left", y=-0.16, yanchor="top", font=dict(size=11),
+                                  traceorder="normal"))
     fig_dict = json.loads(fig.to_json())
     fig_dict["layout"]["shapes"] = shapes
     return fig_dict
