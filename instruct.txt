@@ -1,157 +1,119 @@
-Application Purpose
+The app needs to provide insight in the planning due to the tidal restrictions in te marshalling port
 
-Develop a web application to generate a transport schedule for barges transporting monopiles from a fabrication yard to a marshalling port.
+barge fleet definition remains as is
 
-The application structure, navigation and layout shall follow the existing repository:
+barge cycle should be a generic cycle for all barges, with following user input
 
-https://github.com/MLUY/tidal_transport
+Towing distance , default 350Nm
+Average towing speed, default 4 knots
 
-Input Tab
-Application Header
-Title
+sailing to marshalling port, calculated
+Load-out at fabricator per MP, default 24hrs
+Port depature fabricator, default 3 hours
+Port entry, default 3hrs
 
-Tidal Transport Planner
+load in duration per MP, default 3hrs 
+consider (add as note in small print): load-in is starting on a rising tide from a particular tide level
+This tide level is depending on load configuration, if tide level is not reached the barge will have to wait
+if a barge has two monopiles loaded and the first one is transferred, it will need to wait until the next tide for the next load-in
 
-Description
+general load-in time allowance, default 21 hrs
 
-Short description:
+Port depature, default 6 hours
+sailing back to fabricator, calculated
 
-This application generates transport schedules for monopile transport barges while considering cargo weight classes, barge configurations and tidal restrictions.
+Next to input create a new tab with "cargo-cycle" here should be provided :
 
-Barge Data
+insert table cargo_weight classes here
+as a default code / from / to
+A 1000 1200
+B 1200 1400
+C 1400 1600
+D 1600 1800
 
-The user shall be able to define a fleet of barges.
+insert table for the defined single barges their MP restrictions here:
+columns give barge names, rows are catagories, values are tide levels
+the values are representative for the heaviest monopile which is allowed to be loaded
+a "x" means this configuration is not possible
+first set of barge names are for single configuration, second set of barge names are for double configuration 
+make sure you identify this difference in the table with as default 
 
-Each barge shall have:
+     single | double  
+code b1 b2  | b1 b2
+A 520 520 550 550 
+B 540 540 600 600
+C 560 560 x x
+D 580 580 x x
 
-Field	Type
-Name	Text
-Configuration	Single / Double
+Next to input create a new tab with "fabricator" here should be provided :
 
-Default barges:
+Fabrication yard storage capacity: default 6
+Number of load-out berths available: default 1
 
-Name	Configuration
-barge_1	Double
-barge_2	Double
-barge_3	Single
+Create a option to select when the monopile should be produced and reay for load-out either earliest or latest date
 
-Rules:
-Single Configuration
-Can carry exactly 1 monopile.
-Cannot carry 2 monopiles.
-Double Configuration
-Can carry:
-1 monopile
-2 monopile
-
-Cargo Weight Classes
-User shall define cargo classes.
-Default values:
-
-Class	From Weight (t)	To Weight (t)
-A	1000	1200
-B	1200	1400
-C	1400	1600
-D	1600	1800
-
-The number of classes shall be editable.
-
-barge cycle
-user shall define a barge cycle per barge
-
-activity hr
-loading per monopile 24hr
-sailing 96hr
-discharging per monopile 2hr
-
-discharging can only take place when tide is higher than indicated in the barge table
-if discharging cannot take place barge needs to wait until tide reaches the level
-
-Tide Restrictions Matrix
-
-Based on the barges defined above, the application shall automatically generate a tide restriction table.
-
-The matrix defines the minimum required tide level (cm) for each operating condition.
-
-Single Monopile Transport
-
-For every barge, one row shall be generated representing:
-Single monopile transport.
-Minimum required tide level per cargo class.
-
-Default:
-
-Name	Configuration	A	B	C	D
-barge_1	Single	600	620	640	660
-barge_2	Single	600	620	640	660
-barge_3	Single	600	620	640	x
-Double Monopile Transport
-
-Only available for barges with configuration = Double.
-
-One additional row shall be generated.
-
-Rules:
-
-Tide requirement is determined by the heaviest monopile on board.
-Class shown represents the highest class carried.
-"x" indicates that cargo combination is not permitted.
-
-Default:
-
-Name	Configuration	A	B	C	D
-barge_1	Double	650	700	x	x
-barge_2	Double	650	700	x	x
-
-The fabricator has a delivery schedule for a number of monopiles
-
-as a default generate a table for the delivery schedule with 5 columns
-1 load out number / 2 name / 3 weight / 4 earliest / 5 latest
-
-generate as default the following
+Proivde the MP schedule table as a default provide this:
 
 number	location	weight	earliest	latest
-1	OSS	1520	06/03/2028	21/03/2028
-2	WTG-31	1368.3	07/03/2028	22/03/2028
-3	WTG-34	1206.1	08/03/2028	23/03/2028
-4	WTG-33	1258.1	16/03/2028	31/03/2028
-5	WTG-07	1374.7	17/03/2028	01/04/2028
-6	WTG-06	1427.8	26/03/2028	10/04/2028
-7	WTG-05	1526.5	27/03/2028	11/04/2028
-8	WTG-13	1588	04/04/2028	19/04/2028
-9	WTG-25	1438.3	05/04/2028	20/04/2028
-10	WTG-32	1250.4	13/04/2028	28/04/2028
-11	WTG-30	1207.4	14/04/2028	29/04/2028
-12	WTG-36	1343.1	22/04/2028	07/05/2028
-13	WTG-24	1387	23/04/2028	08/05/2028
-14	WTG-16	1506	01/05/2028	16/05/2028
-15	WTG-23	1603.9	02/05/2028	17/05/2028
-16	WTG-03	1309.6	10/05/2028	25/05/2028
-17	WTG-02	1357	11/05/2028	26/05/2028
-18	WTG-22	1478.3	19/05/2028	03/06/2028
-19	WTG-10	1401.7	20/05/2028	04/06/2028
-20	WTG-01	1446.4	02/06/2028	17/06/2028
-21	WTG-35	1412.1	03/06/2028	18/06/2028
-22	WTG-08	1373.7	11/06/2028	26/06/2028
-23	WTG-15	1291.7	12/06/2028	27/06/2028
-24	WTG-14	1282.9	20/06/2028	05/07/2028
-25	WTG-12	1247.9	21/06/2028	06/07/2028
-26	WTG-04	1526.5	04/07/2028	19/07/2028
-27	WTG-11	1440	05/07/2028	20/07/2028
-28	WTG-21	1358.2	13/07/2028	28/07/2028
-29	WTG-20	1391.9	14/07/2028	29/07/2028
-30	WTG-19	1325.3	01/08/2028	16/08/2028
-31	WTG-09	1146	02/08/2028	17/08/2028
-32	WTG-27	1724.7	10/08/2028	25/08/2028
-33	WTG-26	1579.6	11/08/2028	26/08/2028
-34	WTG-17	1611	19/08/2028	03/09/2028
-35	WTG-18	1596	20/08/2028	04/09/2028
-36	WTG-29	1401.9	27/08/2028	11/09/2028
-37	WTG-28	1250.9	31/08/2028	15/09/2028
+1	OSS	1,520 	06/03/2028	21/03/2028
+2	WTG-31	1,725 	07/03/2028	22/03/2028
+3	WTG-34	1,596 	08/03/2028	23/03/2028
+4	WTG-33	1,611 	16/03/2028	31/03/2028
+5	WTG-07	1,588 	17/03/2028	01/04/2028
+6	WTG-06	1,527 	26/03/2028	10/04/2028
+7	WTG-05	1,428 	27/03/2028	11/04/2028
+8	WTG-13	1,506 	04/04/2028	19/04/2028
+9	WTG-25	1,527 	05/04/2028	20/04/2028
+10	WTG-32	1,580 	13/04/2028	28/04/2028
+11	WTG-30	1,146 	14/04/2028	29/04/2028
+12	WTG-36	1,251 	22/04/2028	07/05/2028
+13	WTG-24	1,248 	23/04/2028	08/05/2028
+14	WTG-16	1,357 	01/05/2028	16/05/2028
+15	WTG-23	1,283 	02/05/2028	17/05/2028
+16	WTG-03	1,258 	10/05/2028	25/05/2028
+17	WTG-02	1,206 	11/05/2028	26/05/2028
+18	WTG-22	1,292 	19/05/2028	03/06/2028
+19	WTG-10	1,207 	20/05/2028	04/06/2028
+20	WTG-01	1,368 	02/06/2028	17/06/2028
+21	WTG-35	1,402 	03/06/2028	18/06/2028
+22	WTG-08	1,438 	11/06/2028	26/06/2028
+23	WTG-15	1,310 	12/06/2028	27/06/2028
+24	WTG-14	1,604 	20/06/2028	05/07/2028
+25	WTG-12	1,387 	21/06/2028	06/07/2028
+26	WTG-04	1,375 	04/07/2028	19/07/2028
+27	WTG-11	1,343 	05/07/2028	20/07/2028
+28	WTG-21	1,374 	13/07/2028	28/07/2028
+29	WTG-20	1,412 	14/07/2028	29/07/2028
+30	WTG-19	1,446 	01/08/2028	16/08/2028
+31	WTG-09	1,250 	02/08/2028	17/08/2028
+32	WTG-27	1,358 	10/08/2028	25/08/2028
+33	WTG-26	1,440 	11/08/2028	26/08/2028
+34	WTG-17	1,478 	19/08/2028	03/09/2028
+35	WTG-18	1,402 	20/08/2028	04/09/2028
+36	WTG-29	1,325 	27/08/2028	11/09/2028
+37	WTG-28	1,392 	31/08/2028	15/09/2028
 
-The tidal data is to be provided as per the file and setup in https://github.com/MLUY/tidal_transport
 
-output should be similar as per https://github.com/MLUY/tidal_transport
+Next to fabricator create tab "marshalling port"
+Number of load-out berths available: default 1
+provide upload for the tidal data (default Gunsan 2026)
 
-gant planning chart
-cycle showing load-in only (as this is tidal data at the load in port)
+insert tab "planning"
+
+generate a table with the barges and their start date as a default:
+
+barge start
+barge_1 15/03/2028
+barge_2 15/03/2028
+barge_3 15/05/2028
+
+assume the barges start from the fabricator yard (describe as not in small print)
+if their is only one load-out berth available barges need to wait until the berth becomes available
+
+
+
+
+
+
+
+
