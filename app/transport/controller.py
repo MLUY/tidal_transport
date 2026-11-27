@@ -140,6 +140,32 @@ def _sailing_text(params, **kwargs) -> str:
     return f"{hrs:.1f} h ({hrs / 24:.1f} days) each way"
 
 
+CHART_ALL, CHART_DETAIL = "Complete project", "Detail of one trip"
+UI_ONLY = {"chart_mode", "detail_barge", "detail_trip"}      # display choices: no new calculation
+
+
+def _barge_options(params, **kwargs) -> list:
+    return [n for n, _ in _fleet(params)] or ["-"]
+
+
+def _trip_options(params, **kwargs) -> list:
+    """Trips of the selected barge, e.g. '3: WTG-36 + WTG-24 (double)'; plain numbers when no planning."""
+    barge = (params.planning or {}).get("detail_barge") or next(iter(_barge_options(params)), "")
+    try:
+        res = _schedule(params)
+    except Exception:  # noqa: BLE001 - the views show the input error
+        return ["1"]
+    trips = [t for t in res.trips if t.barge == barge]
+    return [f"{t.trip_no}: {' + '.join(m.name for m in t.monopiles)} ({t.mode.lower()})" for t in trips] or ["1"]
+
+
+def _trip_number(value) -> int:
+    try:
+        return int(str(value or "1").split(":")[0])
+    except ValueError:
+        return 1
+
+
 # ---------------------------------------------------------------- parametrization
 class Parametrization(vkt.Parametrization):
     # ---------------- Input: purpose, barge fleet, generic barge cycle
@@ -148,7 +174,7 @@ class Parametrization(vkt.Parametrization):
     input.intro = vkt.Text("*Insight in the transport planning of monopile barges from the fabricator to the "
                            "marshalling port, given the tidal restrictions for the load-in at the marshalling port.*")
     input.barge_text = vkt.Text("### Barge fleet\n*Single: carries exactly 1 monopile. Double: carries 1 or 2 "
-                                f"monopiles. Up to {MAX_BARGES} barges.*")
+                                f"monopiles.*")
     input.barges = vkt.Table("Barge fleet", default=DEFAULT_BARGES)
     input.barges.name = vkt.TextField("Name")
     input.barges.configuration = vkt.OptionField("Configuration", options=[SINGLE, DOUBLE])
@@ -232,11 +258,19 @@ class Parametrization(vkt.Parametrization):
     planning.starts = vkt.Table("Barge start", default=DEFAULT_STARTS)
     planning.starts.name = vkt.TextField("Barge")
     planning.starts.start = vkt.TextField("Start (dd/mm/yyyy)")
-    planning.max_wait_second = vkt.NumberField("Double barge: max. wait for the second monopile", suffix="h",
-                                               default=24, min=0,
-                                               description="A Double barge waits at most this long after loading "
-                                                           "the first monopile for the next one; otherwise it sails "
-                                                           "with one.")
+    planning.max_wait_second = vkt.NumberField("Double barge max wait", suffix="h", default=24, min=0)
+    planning.max_wait_note = vkt.Text(
+        "*Max. wait at the fabricator for the 2nd monopile: after loading the first monopile, a Double barge waits "
+        "at most this long for the next monopile to be ready. If it is ready later, the barge sails with one "
+        "monopile. Only when the Double configuration is allowed for the combination (db column, not 'x').*")
+
+    planning.chart_text = vkt.Text("### Planning chart")
+    planning.chart_mode = vkt.OptionField("Show", options=[CHART_ALL, CHART_DETAIL], default=CHART_ALL,
+                                          variant="radio-inline", flex=100)
+    planning.detail_barge = vkt.OptionField("Barge", options=_barge_options, flex=50,
+                                            visible=vkt.IsEqual(vkt.Lookup("planning.chart_mode"), CHART_DETAIL))
+    planning.detail_trip = vkt.OptionField("Trip", options=_trip_options, flex=50,
+                                           visible=vkt.IsEqual(vkt.Lookup("planning.chart_mode"), CHART_DETAIL))
 
 
 # ---------------------------------------------------------------- inputs -> engine
@@ -326,7 +360,8 @@ _CACHE: dict = {}
 def _schedule(params):
     p = _flat(params)
     data = _tide_bytes(p)
-    key = hashlib.sha1((json.dumps({k: v for k, v in p.items() if k != "tide_file"}, default=str, sort_keys=True)
+    key = hashlib.sha1((json.dumps({k: v for k, v in p.items() if k != "tide_file" and k not in UI_ONLY},
+                                   default=str, sort_keys=True)
                         + hashlib.sha1(data).hexdigest()).encode()).hexdigest()
     if key not in _CACHE:
         if len(_CACHE) > 20:
@@ -470,6 +505,89 @@ def build_table(res) -> go.Figure:
     return fig
 
 
+def build_detail(res, barge: str, trip_no: int) -> dict:
+    """Detail of one trip at the marshalling port: full tidal curve around the load-in(s) with the required tide
+    levels, the moments the tide is rising and high enough (green), and below the trip's activities on an hourly
+    time axis - so it can be checked that each load-in starts on a rising tide at the required level."""
+    trip = next((t for t in res.trips if t.barge == barge and t.trip_no == trip_no), None)
+    if trip is None:
+        raise vkt.UserError(f"Trip {trip_no} of barge {barge} does not exist - choose another trip.")
+    tide = res.tide
+    label = f"{trip.barge} trip {trip.trip_no}"
+    segs = [s for s in res.segments if s["trip"] == label]
+    t0 = trip.arrival - timedelta(hours=6)
+    t1 = trip.finish_port + timedelta(hours=6)
+    hrs = np.arange(tide.to_hours(t0), tide.to_hours(t1), 1 / 12)
+    times = [tide.t0 + timedelta(hours=float(h)) for h in hrs]
+    level = tide.level_cm(hrs)
+    rising = tide.rising(hrs)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04)
+    fig.add_trace(go.Scatter(x=times, y=level, mode="lines", name="Tide level", line=dict(color="#1f77b4", width=2),
+                             hovertemplate="%{x|%d-%m %H:%M}  %{y:.0f} cm<extra></extra>"), row=1, col=1)
+    levels = sorted({x[1] for x in trip.loadins})
+    level_colors = ["#2ca02c", "#9467bd"]      # same colour for the level line and its 'may start' highlight
+    shapes = []
+    for k, lvl in enumerate(levels):
+        ok = rising & (level >= lvl)
+        fig.add_trace(go.Scatter(x=times, y=np.where(ok, level, np.nan), mode="lines",
+                                 name=f"Rising tide >= {lvl:.0f} cm (load-in may start)",
+                                 line=dict(color=level_colors[k % 2], width=6), hoverinfo="skip"), row=1, col=1)
+        shapes.append(dict(type="line", xref="x domain", x0=0, x1=1, yref="y", y0=lvl, y1=lvl,
+                           line=dict(color=level_colors[k % 2], dash="dash")))
+        fig.add_annotation(xref="x domain", x=0.005, yref="y", y=lvl, xanchor="left", yanchor="bottom",
+                           showarrow=False, text=f"Required {lvl:.0f} cm", font=dict(color=level_colors[k % 2]),
+                           row=1, col=1)
+    for m, lvl, w, s, e in trip.loadins:
+        shapes.append(dict(type="rect", xref="x", yref="y domain", x0=s.isoformat(), x1=e.isoformat(), y0=0, y1=1,
+                           fillcolor="#2ca02c", opacity=0.18, line=dict(width=0), layer="below"))
+        fig.add_trace(go.Scatter(
+            x=[s], y=[float(tide.level_cm(tide.to_hours(s)))], mode="markers+text", showlegend=False,
+            marker=dict(symbol="triangle-up", size=13, color="#2ca02c"), text=[f"{m.name}"], textposition="top center",
+            hoverinfo="text", hovertext=[f"Load-in {m.name} {s:%d-%m %H:%M} - {e:%H:%M} | required {lvl:.0f} cm | "
+                                         f"tide {float(tide.level_cm(tide.to_hours(s))):.0f} cm, rising | "
+                                         f"tidal wait {w:.1f} h"]), row=1, col=1)
+    for s in segs:
+        if s["category"] == CAT_TIDE:
+            shapes.append(dict(type="rect", xref="x", yref="y domain", x0=s["start"].isoformat(),
+                               x1=s["finish"].isoformat(), y0=0, y1=1, fillcolor="#e377c2", opacity=0.25,
+                               line=dict(width=0), layer="below"))
+    # trip activities on an hourly axis
+    for cat, color in COLORS.items():
+        cs = [s for s in segs if s["category"] == cat and s["finish"] > t0 and s["start"] < t1]
+        if not cs:
+            continue
+        fig.add_trace(go.Bar(
+            base=[max(s["start"], t0) for s in cs],
+            x=[(min(s["finish"], t1) - max(s["start"], t0)).total_seconds() * 1000 for s in cs],
+            y=[cat] * len(cs), orientation="h", marker_color=color, name=cat, showlegend=False,
+            text=[f"{(s['finish'] - s['start']).total_seconds() / 3600:.1f} h" for s in cs], textposition="inside",
+            insidetextanchor="middle", hoverinfo="text",
+            hovertext=[f"{cat}: {s['detail']}<br>{s['start']:%d-%m %H:%M} - {s['finish']:%d-%m %H:%M} "
+                       f"({(s['finish'] - s['start']).total_seconds() / 3600:.1f} h)" for s in cs]), row=2, col=1)
+    order = [c for c in COLORS if any(s["category"] == c and s["finish"] > t0 and s["start"] < t1 for s in segs)]
+    fig.update_yaxes(categoryorder="array", categoryarray=order[::-1], row=2, col=1)
+    fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
+    # opens zoomed in on the load-in(s) with an hourly grid; zoom out (double-click) for the whole port stay
+    z0 = min(x[3] for x in trip.loadins) - timedelta(hours=8)
+    z1 = max(x[4] for x in trip.loadins) + timedelta(hours=8)
+    hourly = dict(dtick=3600000, showgrid=True, gridcolor="#e0e0e0")
+    fig.update_xaxes(type="date", range=[z0.isoformat(), z1.isoformat()], minor=hourly, gridcolor="#b0b0b0")
+    fig.update_xaxes(tickformat="%H:%M\n%d-%m-%Y", row=2, col=1)
+    mps = " + ".join(f"{m.name} ({m.weight_t:g} t, class {m.cargo_class})" for m in trip.monopiles)
+    loadins = " | ".join(f"load-in {m.name} {s:%d-%m %H:%M} at >= {lvl:.0f} cm (wait {w:.1f} h)"
+                         for m, lvl, w, s, e in trip.loadins)
+    _layout_title(fig, [f"<b>Detail {label}</b> - {trip.mode.lower()} configuration: {mps}",
+                        f"Arrival {trip.arrival:%d-%m-%Y %H:%M} | {loadins}<br><sup>Thick line: rising tide at or "
+                        f"above the required level (load-in may start). Green area: load-in, pink area: waiting for "
+                        f"the tide. Thin grid lines: every hour. Zoomed in on the load-in(s); double-click to see the whole port "
+                        f"stay.</sup>"], 720)
+    fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=110, l=230), legend_title_text="",
+                      legend=dict(orientation="h", y=-0.12))
+    fig_dict = json.loads(fig.to_json())
+    fig_dict["layout"]["shapes"] = shapes
+    return fig_dict
+
+
 def build_stock(res) -> go.Figure:
     """Stock curves: monopiles at the fabricator (with the storage capacity) and on the barges (top), and
     monopiles delivered at the marshalling port (bottom)."""
@@ -541,7 +659,12 @@ class TransportPlan(vkt.Controller):
 
     @vkt.PlotlyView("Planning", duration_guess=1)
     def planning_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_gantt(_schedule(params)).to_json())
+        res = _schedule(params)
+        plan = params.planning or {}
+        if plan.get("chart_mode") == CHART_DETAIL:
+            barge = plan.get("detail_barge") or res.barges[0].name
+            return vkt.PlotlyResult(build_detail(res, barge, _trip_number(plan.get("detail_trip"))))
+        return vkt.PlotlyResult(build_gantt(res).to_json())
 
     @vkt.PlotlyView("Tide", duration_guess=1)
     def tide_view(self, params, **kwargs):
