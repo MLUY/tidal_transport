@@ -758,6 +758,7 @@ def build_cycles(res) -> go.Figure:
     totals = [((segs[-1]["finish"] - t0).total_seconds() / 86400, label, t) for label, t, t0, segs in rows]
     fig.add_trace(go.Scatter(x=[d for d, _, _ in totals], y=[lab for _, lab, _ in totals], mode="text",
                              text=[f"  {d:.1f} d ({t.mode.lower()})" for d, _, t in totals], textposition="middle right",
+                             textfont=dict(size=10),
                              showlegend=False, hoverinfo="skip"))
     c = res.cycle
     nominal = {SINGLE: c.loadout_h + c.dep_fab_h + 2 * c.sailing_h + c.entry_h + c.loadin_h + c.allowance_h + c.dep_h}
@@ -775,11 +776,13 @@ def build_cycles(res) -> go.Figure:
                         f"longest {max(days):.1f} d<br><sup>Cycle = from back at the fabricator (end of the previous "
                         f"trip, or the barge start) until back at the fabricator. Dashed lines: cycle without any "
                         f"waiting.</sup>"], height)
+    # every trip label shown (Plotly otherwise skips labels when rows are close together), small fixed-width font
     fig.update_yaxes(categoryorder="array", categoryarray=labels[::-1], title_text="",
-                     tickfont=dict(family="Consolas, 'Courier New', monospace", size=14, color="#222"),
-                     ticklabelstandoff=8)
+                     tickmode="array", tickvals=labels, ticktext=labels,
+                     tickfont=dict(family="Consolas, 'Courier New', monospace", size=11, color="#222"),
+                     ticklabelstandoff=6)
     fig.update_xaxes(title_text="Days from the start of the cycle", range=[0, max(days) * 1.18])
-    fig.update_layout(barmode="overlay", bargap=0.25, margin=dict(t=115, l=40 + 9 * (w_name + w_trip + 8)),
+    fig.update_layout(barmode="overlay", bargap=0.2, margin=dict(t=115, l=30 + 7 * (w_name + w_trip + 8)),
                       hovermode="closest")
     return fig
 
