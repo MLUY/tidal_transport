@@ -6,7 +6,7 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 ## Input tabs
 - **Input**: barge fleet (name, Single / Double, up to 6 barges) and the generic barge cycle for all barges:
   towing distance (350 nm) and average speed (4 kn) -> sailing time calculated (87.5 h each way); load-out per
-  MP 24 h, port departure fabricator 3 h, port entry 3 h, load-in per MP 3 h, general load-in time allowance
+  MP 24 h, port departure fabricator 3 h, port entry 3 h, **load-in duration per MP 3 h (sets the tidal window)**, general load-in time allowance
   21 h, port departure 6 h. After changing barges or cargo classes press **Update tide matrix and barge start
   tables**.
 - **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns
@@ -39,8 +39,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 
 ## Results
 - **Planning**: Gantt per barge with all activities and waits, or (tab Planning, *Planning chart* = Detail of one
-  trip) one barge trip: tidal curve with the required levels, where the tide is rising and high enough (load-in
-  may start), the load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the
+  trip) one barge trip: tidal curve with the required level per barge configuration, green where the tide stays
+  at or above that level for at least the load-in duration (load-in possible), grey where it is too short, the
+  load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the
   load-in(s).
 - **Tide**: tidal graph of the marshalling port (like the Tide Planner cycle view) with every load-in, pink
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the

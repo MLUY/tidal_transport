@@ -189,7 +189,12 @@ class Parametrization(vkt.Parametrization):
     input.loadout_h = vkt.NumberField("Load-out at fabricator per MP", suffix="h", default=24, min=0, flex=50)
     input.dep_fab_h = vkt.NumberField("Port departure fabricator", suffix="h", default=3, min=0, flex=50)
     input.entry_h = vkt.NumberField("Port entry", suffix="h", default=3, min=0, flex=50)
-    input.loadin_h = vkt.NumberField("Load-in duration per MP", suffix="h", default=3, min=0, flex=50)
+    input.loadin_text = vkt.Text(
+        "🔴 **LOAD-IN DURATION PER MP - this sets the tidal window.** For every load-in the tide must stay at or above "
+        "the required level for this whole duration. This value is used for all tidal window calculations and "
+        "charts.")
+    input.loadin_h = vkt.NumberField("🔴 LOAD-IN DURATION PER MP (tidal window)", suffix="h", default=3, min=0,
+                                     flex=100)
     input.allowance_h = vkt.NumberField("General load-in time allowance", suffix="h", default=21, min=0, flex=50)
     input.dep_h = vkt.NumberField("Port departure", suffix="h", default=6, min=0, flex=50)
     input.loadin_note = vkt.Text(
@@ -529,30 +534,57 @@ def build_detail(res, barge: str, trip_no: int) -> dict:
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04)
     fig.add_trace(go.Scatter(x=times, y=level, mode="lines", name="Tide level", line=dict(color="#1f77b4", width=2),
                              hovertemplate="%{x|%d-%m %H:%M}  %{y:.0f} cm<extra></extra>"), row=1, col=1)
-    levels = sorted({x[1] for x in trip.loadins})
-    level_colors = ["#2ca02c", "#9467bd"]      # same colour for the level line and its 'may start' highlight
+    # required level per load-in configuration of this trip (first load-in of a double trip: Double level)
+    configs = []
+    for n, (m, lvl, w, st, en) in enumerate(trip.loadins):
+        if trip.mode == DOUBLE and n == 0:
+            name = f"Double ({' + '.join(x.name for x in trip.monopiles)})"
+        else:
+            name = f"Single ({m.name}, class {m.cargo_class})"
+        if lvl not in [c[1] for c in configs]:
+            configs.append((name, lvl))
+    dur = res.cycle.loadin_h
+    fills = ["rgba(44,160,44,0.55)", "rgba(44,160,44,0.28)"]
+    lines = ["#1a7f1a", "#6fbf6f"]
     shapes = []
-    for k, lvl in enumerate(levels):
-        # may start: rising tide now and at or above the level for the whole load-in duration
-        n_ahead = int(round(res.cycle.loadin_h * 12))
+    short_legend = True
+    for k, (name, lvl) in enumerate(configs):
+        # green: tide at or above the level for at least the load-in duration, starting on a rising tide
+        # (load-in possible); grey: above the level, but shorter than the load-in duration
         above = level >= lvl
-        stays = np.array([above[i:i + n_ahead + 1].all() if i + n_ahead < len(above) else False
-                          for i in range(len(above))])
-        ok = rising & stays
-        fig.add_trace(go.Scatter(x=times, y=np.where(ok, level, np.nan), mode="lines",
-                                 name=f"Rising tide >= {lvl:.0f} cm (load-in may start)",
-                                 line=dict(color=level_colors[k % 2], width=6), hoverinfo="skip"), row=1, col=1)
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], above.astype(int), [0]])))
+        ok_x, ok_y, short_x, short_y = [], [], [], []
+        for a, b in zip(edges[::2], edges[1::2]):
+            run_h = (b - a) / 12
+            xs = times[a:b] + times[a:b][::-1] + [None]
+            ys = list(level[a:b]) + [lvl] * (b - a) + [None]
+            if run_h >= dur and (a == 0 or rising[a]):
+                ok_x += xs
+                ok_y += ys
+            else:
+                short_x += xs
+                short_y += ys
+        fig.add_trace(go.Scatter(x=ok_x, y=ok_y, fill="toself", fillcolor=fills[k % 2], mode="lines",
+                                 line=dict(width=0), hoverinfo="skip",
+                                 name=f"{name}: tide >= {lvl:.0f} cm for >= {dur:g} h (load-in possible)"),
+                      row=1, col=1)
+        if short_x:
+            fig.add_trace(go.Scatter(x=short_x, y=short_y, fill="toself", fillcolor="rgba(150,150,150,0.35)",
+                                     mode="lines", line=dict(width=0), hoverinfo="skip",
+                                     name=f"Above the level, but shorter than {dur:g} h", legendgroup="short",
+                                     showlegend=short_legend), row=1, col=1)
+            short_legend = False
         shapes.append(dict(type="line", xref="x domain", x0=0, x1=1, yref="y", y0=lvl, y1=lvl,
-                           line=dict(color=level_colors[k % 2], dash="dash")))
+                           line=dict(color=lines[k % 2], dash="dash", width=2)))
         fig.add_annotation(xref="x domain", x=0.005, yref="y", y=lvl, xanchor="left", yanchor="bottom",
-                           showarrow=False, text=f"Required {lvl:.0f} cm", font=dict(color=level_colors[k % 2]),
-                           row=1, col=1)
+                           showarrow=False, text=f"{name}: required {lvl:.0f} cm",
+                           font=dict(color=lines[k % 2]), row=1, col=1)
     for m, lvl, w, s, e in trip.loadins:
         shapes.append(dict(type="rect", xref="x", yref="y domain", x0=s.isoformat(), x1=e.isoformat(), y0=0, y1=1,
-                           fillcolor="#2ca02c", opacity=0.18, line=dict(width=0), layer="below"))
+                           fillcolor="#1f77b4", opacity=0.12, line=dict(color="#1f77b4", width=1), layer="below"))
         fig.add_trace(go.Scatter(
             x=[s], y=[float(tide.level_cm(tide.to_hours(s)))], mode="markers+text", showlegend=False,
-            marker=dict(symbol="triangle-up", size=13, color="#2ca02c"), text=[f"{m.name}"], textposition="top center",
+            marker=dict(symbol="triangle-up", size=13, color="#1f77b4"), text=[f"{m.name}"], textposition="top center",
             hoverinfo="text", hovertext=[f"Load-in {m.name} {s:%d-%m %H:%M} - {e:%H:%M} | required {lvl:.0f} cm | "
                                          f"tide {float(tide.level_cm(tide.to_hours(s))):.0f} cm, rising | "
                                          f"tidal wait {w:.1f} h"]), row=1, col=1)
@@ -587,10 +619,11 @@ def build_detail(res, barge: str, trip_no: int) -> dict:
     loadins = " | ".join(f"load-in {m.name} {s:%d-%m %H:%M} at >= {lvl:.0f} cm (wait {w:.1f} h)"
                          for m, lvl, w, s, e in trip.loadins)
     _layout_title(fig, [f"<b>Detail {label}</b> - {trip.mode.lower()} configuration: {mps}",
-                        f"Arrival {trip.arrival:%d-%m-%Y %H:%M} | {loadins}<br><sup>Thick line: rising tide at or "
-                        f"above the required level for the whole load-in after it (load-in may start). Green area: load-in, pink area: waiting for "
-                        f"the tide. Thin grid lines: every hour. Zoomed in on the load-in(s); double-click to see the whole port "
-                        f"stay.</sup>"], 720)
+                        f"Arrival {trip.arrival:%d-%m-%Y %H:%M} | {loadins}<br><sup>Green: tide at or above the "
+                        f"required level of this barge configuration for at least the load-in duration "
+                        f"({res.cycle.loadin_h:g} h) - load-in possible. Grey: above the level but too short. Blue band: "
+                        f"load-in, pink: waiting for the tide. Thin grid lines: every hour; double-click for the whole "
+                        f"port stay.</sup>"], 720)
     fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=110, l=230), legend_title_text="",
                       legend=dict(orientation="h", y=-0.12))
     fig_dict = json.loads(fig.to_json())
