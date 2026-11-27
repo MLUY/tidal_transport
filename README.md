@@ -10,7 +10,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   21 h, port departure 6 h. After changing barges or cargo classes press **Update tide matrix and barge start
   tables**.
 - **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns =
-  barges, first the Single configuration, then the Double configuration (level for the heaviest monopile on
+  barges b1, b2, ... (1st, 2nd, ... barge of the fleet), first the Single configuration, then the Double
+  configuration (level for the heaviest monopile on
   board; `x` = not possible). The line *Columns* shows which barge each column is.
 - **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
@@ -34,7 +35,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 
 ## Results
 - **Planning**: Gantt per barge with all activities and waits.
-- **Load-in**: tide at the marshalling port with every load-in; below the tidal waits and load-ins per barge.
+- **Tide**: tidal graph of the marshalling port (like the Tide Planner cycle view) with every load-in, pink
+  vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
+  barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
+  move to a date, drag in the graph to zoom (also the y-axis), double-click to reset.
 - **Yard**: monopiles stored at the fabrication yard vs. the storage capacity, production delays.
 - **Table**: per monopile: class, ready / produced, barge / trip, single / double, load-out, arrival, load-in,
   required tide, tidal wait.
