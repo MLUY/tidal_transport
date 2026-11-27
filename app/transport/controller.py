@@ -26,10 +26,10 @@ COLORS = {CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7",
           CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
           CAT_LOADIN: "#2ca02c", CAT_ALLOW: "#98df8a", CAT_DEP: "#9467bd", CAT_RETURN: "#aec7e8"}
 
-DEFAULT_BARGES = [dict(name="barge_1", configuration=DOUBLE), dict(name="barge_2", configuration=DOUBLE),
-                  dict(name="barge_3", configuration=SINGLE)]
-DEFAULT_STARTS = [dict(name="barge_1", start="15/03/2028"), dict(name="barge_2", start="15/03/2028"),
-                  dict(name="barge_3", start="15/05/2028")]
+DEFAULT_BARGES = [dict(name="b1", configuration=DOUBLE), dict(name="b2", configuration=DOUBLE),
+                  dict(name="b3", configuration=SINGLE)]
+DEFAULT_STARTS = [dict(name="b1", start="15/03/2028"), dict(name="b2", start="15/03/2028"),
+                  dict(name="b3", start="15/05/2028")]
 DEFAULT_CLASSES = [dict(name="A", from_t=1000, to_t=1200), dict(name="B", from_t=1200, to_t=1400),
                    dict(name="C", from_t=1400, to_t=1600), dict(name="D", from_t=1600, to_t=1800)]
 # per class: single level (all barges), double level (Double barges)
@@ -110,8 +110,8 @@ def _matrix_columns(params, **kwargs) -> str:
     fleet = _fleet(params)
     if not fleet:
         return "-"
-    single = ", ".join(f"Single {k + 1} = {n}" for k, (n, _) in enumerate(fleet))
-    double = ", ".join(f"Double {k + 1} = {n}" for k, (n, c) in enumerate(fleet) if c == DOUBLE) or "none"
+    single = ", ".join(f"Single b{k + 1} = {n}" for k, (n, _) in enumerate(fleet))
+    double = ", ".join(f"Double b{k + 1} = {n}" for k, (n, c) in enumerate(fleet) if c == DOUBLE) or "none"
     return f"{single} | {double}"
 
 
@@ -163,16 +163,16 @@ class Parametrization(vkt.Parametrization):
     cargo.classes.from_t = vkt.NumberField("From", suffix="t")
     cargo.classes.to_t = vkt.NumberField("To", suffix="t")
     cargo.matrix_text = vkt.Text(
-        "### Tide levels for load-in (cm)\n*Rows: cargo classes. Columns: barges - first the **Single** "
+        "### Tide levels for load-in (cm)\n*Rows: cargo classes. Columns: barges b1, b2, ... (1st, 2nd, ... barge of the fleet) - first the **Single** "
         "configuration (one monopile on board), then the **Double** configuration (two monopiles). The value is the "
         "tide level needed for the heaviest monopile on board; 'x' = configuration not possible.*")
     cargo.columns = vkt.OutputField("Columns", value=_matrix_columns, flex=100)
     cargo.matrix = vkt.Table("Tide levels for load-in (cm)", default=DEFAULT_MATRIX)
     cargo.matrix.code = vkt.TextField("Code")
     for _k, _col in enumerate(S_COLS):
-        setattr(cargo.matrix, _col, vkt.TextField(f"Single {_k + 1}"))
+        setattr(cargo.matrix, _col, vkt.TextField(f"Single b{_k + 1}"))
     for _k, _col in enumerate(D_COLS):
-        setattr(cargo.matrix, _col, vkt.TextField(f"Double {_k + 1}"))
+        setattr(cargo.matrix, _col, vkt.TextField(f"Double b{_k + 1}"))
 
     # ---------------- Fabricator: yard, berths, monopile schedule
     fabricator = vkt.Tab("Fabricator")
@@ -270,9 +270,9 @@ def _inputs(p):
             start = None
         if start is None:
             raise vkt.UserError(f"Barge start: '{starts[name]}' for {name} is not a valid date (dd/mm/yyyy).")
-        single = {c.name: _cm(matrix[c.name].get(S_COLS[k]), f"Single {k + 1} ({name}) class {c.name}")
+        single = {c.name: _cm(matrix[c.name].get(S_COLS[k]), f"Single b{k + 1} ({name}) class {c.name}")
                   for c in classes}
-        double = ({c.name: _cm(matrix[c.name].get(D_COLS[k]), f"Double {k + 1} ({name}) class {c.name}")
+        double = ({c.name: _cm(matrix[c.name].get(D_COLS[k]), f"Double b{k + 1} ({name}) class {c.name}")
                    for c in classes} if conf == DOUBLE else {})
         barges.append(Barge(name=name, configuration=conf, start=datetime.combine(start, datetime.min.time()),
                             single_cm=single, double_cm=double))
@@ -347,52 +347,78 @@ def build_gantt(res) -> go.Figure:
     return fig
 
 
-def build_loadin(res) -> go.Figure:
-    """Tide at the marshalling port with every load-in (required level on a rising tide) and below the port
-    activities (tidal wait / load-in) per barge."""
+def _trip_text(t) -> str:
+    """Barge configuration of a trip for the hover info."""
+    mps = " + ".join(f"{m.name} ({m.weight_t:g} t, class {m.cargo_class})" for m in t.monopiles)
+    return f"{t.barge} trip {t.trip_no} - {t.mode.lower()} configuration: {mps}"
+
+
+def build_tide(res) -> dict:
+    """Tidal graph (like the Tide Planner cycle view): tide at the marshalling port with every load-in, pink
+    vertical areas where barges wait for the tide, and below the activities of all barges as Gantt bars. Buttons
+    and a range slider zoom to a date / period; the y-axis can be zoomed as well (drag in the graph)."""
     tide = res.tide
-    t0 = min(t.arrival for t in res.trips) - timedelta(hours=12)
-    t1 = res.finish + timedelta(hours=12)
-    hrs = np.arange(tide.to_hours(t0), tide.to_hours(t1), 0.25)
+    by_trip = {f"{t.barge} trip {t.trip_no}": t for t in res.trips}
+    t0 = res.start - timedelta(days=1)
+    t1 = max(t.back_at_fab for t in res.trips) + timedelta(days=1)
+    hrs = np.arange(max(tide.to_hours(t0), 0.0), min(tide.to_hours(t1), float(tide.hours[-1])), 0.25)
     times = [tide.t0 + timedelta(hours=float(h)) for h in hrs]
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.04)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.68, 0.32], vertical_spacing=0.03)
     fig.add_trace(go.Scatter(x=times, y=tide.level_cm(hrs), mode="lines", name="Tide level",
-                             line=dict(color="#1f77b4", width=1.2)), row=1, col=1)
+                             line=dict(color="#1f77b4", width=1.3),
+                             hovertemplate="%{x|%d-%m-%Y %H:%M}  %{y:.0f} cm<extra></extra>"), row=1, col=1)
     barge_colors = px.colors.qualitative.Dark2
     for k, b in enumerate(res.barges):
         loadins = [(t, x) for t in res.trips if t.barge == b.name for x in t.loadins]
         if not loadins:
             continue
-        color = barge_colors[k % len(barge_colors)]
         fig.add_trace(go.Scatter(
             x=[x[3] for _, x in loadins], y=[x[1] for _, x in loadins], mode="markers",
-            name=f"{b.name} load-in", marker=dict(symbol="triangle-up", size=11, color=color),
+            name=f"{b.name} load-in", marker=dict(symbol="triangle-up", size=11, color=barge_colors[k % 8]),
             hoverinfo="text",
-            text=[f"{b.name} trip {t.trip_no} ({t.mode.lower()}): load-in {m.name} (class {m.cargo_class})<br>"
-                  f"Start {s:%d-%m %H:%M} on a rising tide >= {lvl:.0f} cm | tidal wait {w:.1f} h"
-                  for t, (m, lvl, w, s, e) in loadins]), row=1, col=1)
-    for cat in (CAT_TIDE, CAT_LOADIN):
+            text=[f"{_trip_text(t)}<br>Load-in {m.name}: {s:%d-%m %H:%M} - {e:%H:%M} on a rising tide >= {lvl:.0f} cm"
+                  f"<br>Tidal wait {w:.1f} h" for t, (m, lvl, w, s, e) in loadins]), row=1, col=1)
+    # Gantt bars per barge (one trace per activity, so the legend can switch them on and off)
+    for cat, color in COLORS.items():
         segs = [s for s in res.segments if s["category"] == cat]
-        if segs:
-            fig.add_trace(go.Bar(
-                base=[s["start"] for s in segs], x=[(s["finish"] - s["start"]).total_seconds() * 1000 for s in segs],
-                y=[s["barge"] for s in segs], orientation="h", marker_color=COLORS[cat], name=cat,
-                hoverinfo="text", text=[f"{s['trip']}: {s['detail']} {s['start']:%d-%m %H:%M} - "
-                                        f"{s['finish']:%d-%m %H:%M}" for s in segs], textposition="none"),
-                row=2, col=1)
+        if not segs:
+            continue
+        fig.add_trace(go.Bar(
+            base=[s["start"] for s in segs], x=[(s["finish"] - s["start"]).total_seconds() * 1000 for s in segs],
+            y=[s["barge"] for s in segs], orientation="h", marker_color=color, name=cat,
+            hoverinfo="text", textposition="none",
+            text=[f"{_trip_text(by_trip[s['trip']])}<br>{cat}: {s['detail']}<br>{s['start']:%d-%m %H:%M} - "
+                  f"{s['finish']:%d-%m %H:%M} ({(s['finish'] - s['start']).total_seconds() / 3600:.1f} h)"
+                  for s in segs]), row=2, col=1)
+    # pink vertical areas where a barge waits for the tide (plain shapes: fast, also for many areas)
+    shapes = [dict(type="rect", xref="x", yref="y domain", x0=s["start"].isoformat(), x1=s["finish"].isoformat(),
+                   y0=0, y1=1, fillcolor="#e377c2", opacity=0.3, line=dict(width=0), layer="below")
+              for s in res.segments if s["category"] == CAT_TIDE]
     fig.update_xaxes(type="date")
-    fig.update_yaxes(title_text="Tide level (cm)", row=1, col=1)
-    fig.update_yaxes(categoryorder="array", categoryarray=[b.name for b in res.barges][::-1], row=2, col=1)
-    note = ""
+    # buttons on the bottom x-axis: the top axis follows it (shared axes), placed above the tidal graph
+    fig.update_xaxes(row=2, col=1, rangeselector=dict(x=0, y=1.02, yanchor="bottom", buttons=[
+        dict(count=7, label="1 week", step="day", stepmode="backward"),
+        dict(count=14, label="2 weeks", step="day", stepmode="backward"),
+        dict(count=1, label="1 month", step="month", stepmode="backward"),
+        dict(count=3, label="3 months", step="month", stepmode="backward"),
+        dict(label="All", step="all")]))
+    fig.update_xaxes(row=2, col=1, rangeslider=dict(visible=True, thickness=0.06))
+    fig.update_yaxes(title_text="Tide level (cm)", fixedrange=False, row=1, col=1)
+    fig.update_yaxes(categoryorder="array", categoryarray=[b.name for b in res.barges][::-1], fixedrange=True,
+                     row=2, col=1)
+    small = ("Pink areas: waiting for the tide. Zoom with the buttons, the range slider below or by dragging in "
+             "the graph (also vertically); double-click to reset.")
     if tide.repeated:
-        note = (f"<br><sup>Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other "
-                f"years</sup>")
+        small = (f"Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other years. "
+                 + small)
     n = sum(len(t.loadins) for t in res.trips)
-    _layout_title(fig, ["<b>Load-in at the marshalling port</b>",
+    _layout_title(fig, ["<b>Tide at the marshalling port and barge activities</b>",
                         f"{n} load-ins | tidal wait {res.total_tidal_wait_h:.0f} h "
-                        f"(average {res.total_tidal_wait_h / n:.1f} h per load-in){note}"], 650)
-    fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=90))
-    return fig
+                        f"(average {res.total_tidal_wait_h / n:.1f} h per load-in)<br><sup>{small}</sup>"], 720)
+    fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=125, l=70), dragmode="zoom")
+    fig_dict = json.loads(fig.to_json())
+    fig_dict["layout"]["shapes"] = shapes
+    return fig_dict
 
 
 def build_table(res) -> go.Figure:
@@ -478,9 +504,9 @@ class TransportPlan(vkt.Controller):
     def planning_view(self, params, **kwargs):
         return vkt.PlotlyResult(build_gantt(_schedule(params)).to_json())
 
-    @vkt.PlotlyView("Load-in", duration_guess=1)
-    def loadin_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_loadin(_schedule(params)).to_json())
+    @vkt.PlotlyView("Tide", duration_guess=1)
+    def tide_view(self, params, **kwargs):
+        return vkt.PlotlyResult(build_tide(_schedule(params)))
 
     @vkt.PlotlyView("Yard", duration_guess=1)
     def yard_view(self, params, **kwargs):
