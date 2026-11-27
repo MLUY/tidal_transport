@@ -22,7 +22,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Weather**: workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
   Jun-Aug 90, Sep 85, Oct 75, Nov 65, Dec 50). Weather downtime per leg = sailing time x (100 / workability - 1),
   month of the start of the leg; shown as *Weather downtime* before the sailing.
-- **Planning**: start date per barge (barges start at the fabricator yard); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
+- **Planning**: start date per barge (barges start at the fabricator yard); button **Optimise start dates**:
+  searches every barge's start date within +/- 30 days of the entered dates for the earliest last load-in (one
+  barge at a time, 3-day steps then day by day, repeated until nothing improves; ties: least waiting) and fills
+  in the best dates (result in *Last optimisation*); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
 
 ## Rules (draft)
 1. Monopiles are shipped in number order; each goes on the barge that can start its load-out first.
