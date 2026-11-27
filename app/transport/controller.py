@@ -4,176 +4,218 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+from munch import Munch
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import viktor as vkt
 
-from .schedule import (CAT_DISCHARGE, CAT_LOAD, CAT_RETURN, CAT_SAIL, CAT_TIDE, CAT_WAIT_MP, DOUBLE, SINGLE,
-                       Barge, CargoClass, Monopile, plan_transport)
+from .schedule import (CAT_ALLOW, CAT_BERTH_FAB, CAT_BERTH_MP, CAT_DEP, CAT_DEP_FAB, CAT_ENTRY, CAT_LOAD,
+                       CAT_LOADIN, CAT_RETURN, CAT_SAIL, CAT_TIDE, CAT_WAIT_MP, DOUBLE, READY_EARLIEST, READY_LATEST,
+                       SINGLE, Barge, CargoClass, Cycle, Monopile, plan_transport)
 from .tide import PlanningError, load_tide
 
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
-CLASS_COLS = ("c1", "c2", "c3", "c4", "c5", "c6")      # tide matrix columns = 1st ... 6th cargo class
-MAX_CLASSES = len(CLASS_COLS)
+MAX_BARGES = 6
+S_COLS = tuple(f"s{k}" for k in range(1, MAX_BARGES + 1))      # tide matrix: Single columns = barge 1 ... 6
+D_COLS = tuple(f"d{k}" for k in range(1, MAX_BARGES + 1))      # Double columns = barge 1 ... 6
 NOT_ALLOWED = "x"
+TABS = ("input", "cargo", "fabricator", "port", "planning")
 
-COLORS = {CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_SAIL: "#1f77b4", CAT_TIDE: "#d62728",
-          CAT_DISCHARGE: "#2ca02c", CAT_RETURN: "#aec7e8"}
+COLORS = {CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_DEP_FAB: "#9467bd",
+          CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
+          CAT_LOADIN: "#2ca02c", CAT_ALLOW: "#98df8a", CAT_DEP: "#9467bd", CAT_RETURN: "#aec7e8"}
 
 DEFAULT_BARGES = [dict(name="barge_1", configuration=DOUBLE), dict(name="barge_2", configuration=DOUBLE),
                   dict(name="barge_3", configuration=SINGLE)]
+DEFAULT_STARTS = [dict(name="barge_1", start="15/03/2028"), dict(name="barge_2", start="15/03/2028"),
+                  dict(name="barge_3", start="15/05/2028")]
 DEFAULT_CLASSES = [dict(name="A", from_t=1000, to_t=1200), dict(name="B", from_t=1200, to_t=1400),
                    dict(name="C", from_t=1400, to_t=1600), dict(name="D", from_t=1600, to_t=1800)]
-DEFAULT_CYCLE = dict(loading_h=24.0, sailing_h=96.0, discharging_h=2.0, return_h=96.0)
-DEFAULT_SINGLE = ["600", "620", "640", "660", "", ""]
-DEFAULT_DOUBLE = ["650", "700", NOT_ALLOWED, NOT_ALLOWED, "", ""]
+# per class: single level (all barges), double level (Double barges)
+_DEFAULT_LEVELS = {"A": ("520", "550"), "B": ("540", "600"), "C": ("560", NOT_ALLOWED), "D": ("580", NOT_ALLOWED)}
 
 
-def _matrix_row(name, transport, values):
-    return dict(name=name, transport=transport, **dict(zip(CLASS_COLS, values)))
+def _matrix_row(code, barges):
+    single, double = _DEFAULT_LEVELS.get(code, ("", ""))
+    row = dict(code=code)
+    for k, col in enumerate(S_COLS):
+        row[col] = single if k < len(barges) else ""
+    for k, col in enumerate(D_COLS):
+        row[col] = double if k < len(barges) and barges[k][1] == DOUBLE else ""
+    return row
 
 
-DEFAULT_MATRIX = [
-    _matrix_row("barge_1", SINGLE, DEFAULT_SINGLE),
-    _matrix_row("barge_2", SINGLE, DEFAULT_SINGLE),
-    _matrix_row("barge_3", SINGLE, ["600", "620", "640", NOT_ALLOWED, "", ""]),
-    _matrix_row("barge_1", DOUBLE, DEFAULT_DOUBLE),
-    _matrix_row("barge_2", DOUBLE, DEFAULT_DOUBLE),
-]
+_FLEET = [(b["name"], b["configuration"]) for b in DEFAULT_BARGES]
+DEFAULT_MATRIX = [_matrix_row(c["name"], _FLEET) for c in DEFAULT_CLASSES]
 
-_DELIVERIES = """1 OSS 1520 06/03/2028 21/03/2028
-2 WTG-31 1368.3 07/03/2028 22/03/2028
-3 WTG-34 1206.1 08/03/2028 23/03/2028
-4 WTG-33 1258.1 16/03/2028 31/03/2028
-5 WTG-07 1374.7 17/03/2028 01/04/2028
-6 WTG-06 1427.8 26/03/2028 10/04/2028
-7 WTG-05 1526.5 27/03/2028 11/04/2028
-8 WTG-13 1588 04/04/2028 19/04/2028
-9 WTG-25 1438.3 05/04/2028 20/04/2028
-10 WTG-32 1250.4 13/04/2028 28/04/2028
-11 WTG-30 1207.4 14/04/2028 29/04/2028
-12 WTG-36 1343.1 22/04/2028 07/05/2028
-13 WTG-24 1387 23/04/2028 08/05/2028
-14 WTG-16 1506 01/05/2028 16/05/2028
-15 WTG-23 1603.9 02/05/2028 17/05/2028
-16 WTG-03 1309.6 10/05/2028 25/05/2028
-17 WTG-02 1357 11/05/2028 26/05/2028
-18 WTG-22 1478.3 19/05/2028 03/06/2028
-19 WTG-10 1401.7 20/05/2028 04/06/2028
-20 WTG-01 1446.4 02/06/2028 17/06/2028
-21 WTG-35 1412.1 03/06/2028 18/06/2028
-22 WTG-08 1373.7 11/06/2028 26/06/2028
-23 WTG-15 1291.7 12/06/2028 27/06/2028
-24 WTG-14 1282.9 20/06/2028 05/07/2028
-25 WTG-12 1247.9 21/06/2028 06/07/2028
-26 WTG-04 1526.5 04/07/2028 19/07/2028
-27 WTG-11 1440 05/07/2028 20/07/2028
-28 WTG-21 1358.2 13/07/2028 28/07/2028
-29 WTG-20 1391.9 14/07/2028 29/07/2028
-30 WTG-19 1325.3 01/08/2028 16/08/2028
-31 WTG-09 1146 02/08/2028 17/08/2028
-32 WTG-27 1724.7 10/08/2028 25/08/2028
-33 WTG-26 1579.6 11/08/2028 26/08/2028
-34 WTG-17 1611 19/08/2028 03/09/2028
-35 WTG-18 1596 20/08/2028 04/09/2028
-36 WTG-29 1401.9 27/08/2028 11/09/2028
-37 WTG-28 1250.9 31/08/2028 15/09/2028"""
+_MONOPILES = """1 OSS 1520 06/03/2028 21/03/2028
+2 WTG-31 1725 07/03/2028 22/03/2028
+3 WTG-34 1596 08/03/2028 23/03/2028
+4 WTG-33 1611 16/03/2028 31/03/2028
+5 WTG-07 1588 17/03/2028 01/04/2028
+6 WTG-06 1527 26/03/2028 10/04/2028
+7 WTG-05 1428 27/03/2028 11/04/2028
+8 WTG-13 1506 04/04/2028 19/04/2028
+9 WTG-25 1527 05/04/2028 20/04/2028
+10 WTG-32 1580 13/04/2028 28/04/2028
+11 WTG-30 1146 14/04/2028 29/04/2028
+12 WTG-36 1251 22/04/2028 07/05/2028
+13 WTG-24 1248 23/04/2028 08/05/2028
+14 WTG-16 1357 01/05/2028 16/05/2028
+15 WTG-23 1283 02/05/2028 17/05/2028
+16 WTG-03 1258 10/05/2028 25/05/2028
+17 WTG-02 1206 11/05/2028 26/05/2028
+18 WTG-22 1292 19/05/2028 03/06/2028
+19 WTG-10 1207 20/05/2028 04/06/2028
+20 WTG-01 1368 02/06/2028 17/06/2028
+21 WTG-35 1402 03/06/2028 18/06/2028
+22 WTG-08 1438 11/06/2028 26/06/2028
+23 WTG-15 1310 12/06/2028 27/06/2028
+24 WTG-14 1604 20/06/2028 05/07/2028
+25 WTG-12 1387 21/06/2028 06/07/2028
+26 WTG-04 1375 04/07/2028 19/07/2028
+27 WTG-11 1343 05/07/2028 20/07/2028
+28 WTG-21 1374 13/07/2028 28/07/2028
+29 WTG-20 1412 14/07/2028 29/07/2028
+30 WTG-19 1446 01/08/2028 16/08/2028
+31 WTG-09 1250 02/08/2028 17/08/2028
+32 WTG-27 1358 10/08/2028 25/08/2028
+33 WTG-26 1440 11/08/2028 26/08/2028
+34 WTG-17 1478 19/08/2028 03/09/2028
+35 WTG-18 1402 20/08/2028 04/09/2028
+36 WTG-29 1325 27/08/2028 11/09/2028
+37 WTG-28 1392 31/08/2028 15/09/2028"""
+DEFAULT_MONOPILES = [dict(number=int(n), name=nm, weight_t=float(w), earliest=e, latest=la)
+                     for n, nm, w, e, la in (line.split() for line in _MONOPILES.splitlines())]
 
 
-DEFAULT_DELIVERIES = [dict(number=int(n), name=nm, weight_t=float(w), earliest=e, latest=la)
-                      for n, nm, w, e, la in (line.split() for line in _DELIVERIES.splitlines())]
+def _flat(params):
+    out = {}
+    for key, value in params.items():
+        if key in TABS and isinstance(value, dict):
+            out.update(_flat(value))
+        else:
+            out[key] = value
+    return Munch(out)
 
 
-def _start_text(params, **kwargs) -> str:
-    """Start of transport for the input screen (earliest date of the n-th monopile)."""
+def _fleet(params) -> list:
+    """[(name, configuration)] of the barge fleet (rows with a name)."""
     p = params.input if "input" in params else params
-    rows = sorted([r for r in (p.deliveries or []) if r.name or r.weight_t], key=lambda r: int(r.number or 0))
-    if not rows:
+    return [(str(r.name or "").strip(), r.configuration or SINGLE) for r in (p.barges or []) if str(r.name or "").strip()]
+
+
+def _matrix_columns(params, **kwargs) -> str:
+    fleet = _fleet(params)
+    if not fleet:
         return "-"
-    n = min(max(int(p.start_after or 1), 1), len(rows))
-    try:
-        d = _to_date(rows[n - 1].earliest)
-    except ValueError:
+    single = ", ".join(f"Single {k + 1} = {n}" for k, (n, _) in enumerate(fleet))
+    double = ", ".join(f"Double {k + 1} = {n}" for k, (n, c) in enumerate(fleet) if c == DOUBLE) or "none"
+    return f"{single} | {double}"
+
+
+def _sailing_text(params, **kwargs) -> str:
+    p = params.input if "input" in params else params
+    speed = float(p.speed_kn or 0)
+    if speed <= 0:
         return "-"
-    return f"{d:%d/%m/%Y} (earliest date of monopile {rows[n - 1].number} {rows[n - 1].name or ''})".strip()
+    hrs = float(p.distance_nm or 0) / speed
+    return f"{hrs:.1f} h ({hrs / 24:.1f} days) each way"
 
 
 # ---------------------------------------------------------------- parametrization
 class Parametrization(vkt.Parametrization):
+    # ---------------- Input: purpose, barge fleet, generic barge cycle
     input = vkt.Tab("Input")
     input.title = vkt.Text("## Tidal Transport Planner")
-    input.intro = vkt.Text(
-        "*This application generates transport schedules for monopile transport barges while considering cargo "
-        "weight classes, barge configurations and tidal restrictions.*")
-
-    input.barge_text = vkt.Text("### Barges\n*Single: carries exactly 1 monopile. Double: carries 1 or 2 "
-                                "monopiles.*")
+    input.intro = vkt.Text("*Insight in the transport planning of monopile barges from the fabricator to the "
+                           "marshalling port, given the tidal restrictions for the load-in at the marshalling port.*")
+    input.barge_text = vkt.Text("### Barge fleet\n*Single: carries exactly 1 monopile. Double: carries 1 or 2 "
+                                f"monopiles. Up to {MAX_BARGES} barges.*")
     input.barges = vkt.Table("Barge fleet", default=DEFAULT_BARGES)
     input.barges.name = vkt.TextField("Name")
     input.barges.configuration = vkt.OptionField("Configuration", options=[SINGLE, DOUBLE])
     input.update_tables = vkt.SetParamsButton(
-        "Update barge cycle and tide restriction tables", method="update_tables", flex=100,
-        description="Adds rows for new barges and removes rows of deleted barges; existing values are kept.")
+        "Update tide matrix and barge start tables", method="update_tables", flex=100,
+        description="After changing barges or cargo classes: adds/removes rows, existing values are kept.")
 
-    input.class_text = vkt.Text("### Cargo weight classes\n*From weight <= weight < to weight. Up to "
-                                f"{MAX_CLASSES} classes.*")
-    input.classes = vkt.Table("Cargo weight classes", default=DEFAULT_CLASSES)
-    input.classes.name = vkt.TextField("Class")
-    input.classes.from_t = vkt.NumberField("From weight", suffix="t")
-    input.classes.to_t = vkt.NumberField("To weight", suffix="t")
+    input.cycle_text = vkt.Text("### Barge cycle (all barges)")
+    input.distance_nm = vkt.NumberField("Towing distance", suffix="nm", default=350, min=0, flex=50)
+    input.speed_kn = vkt.NumberField("Average towing speed", suffix="kn", default=4, min=0.1, flex=50)
+    input.sailing = vkt.OutputField("Sailing to marshalling port / back (calculated)", value=_sailing_text, flex=100)
+    input.loadout_h = vkt.NumberField("Load-out at fabricator per MP", suffix="h", default=24, min=0, flex=50)
+    input.dep_fab_h = vkt.NumberField("Port departure fabricator", suffix="h", default=3, min=0, flex=50)
+    input.entry_h = vkt.NumberField("Port entry", suffix="h", default=3, min=0, flex=50)
+    input.loadin_h = vkt.NumberField("Load-in duration per MP", suffix="h", default=3, min=0, flex=50)
+    input.allowance_h = vkt.NumberField("General load-in time allowance", suffix="h", default=21, min=0, flex=50)
+    input.dep_h = vkt.NumberField("Port departure", suffix="h", default=6, min=0, flex=50)
+    input.loadin_note = vkt.Text(
+        "*Load-in starts on a rising tide from a particular tide level. This tide level depends on the load "
+        "configuration (tab Cargo-cycle); if the tide level is not reached the barge has to wait. If a barge has two "
+        "monopiles loaded and the first one is transferred, it waits until the next tide for the next load-in.*")
 
-    input.cycle_text = vkt.Text("### Barge cycle\n*Per barge: loading per monopile at the fabrication yard, "
-                                "sailing to the marshalling port, discharging per monopile (load-in, only when the tide is at "
-                                "or above the required level) and sailing back to the yard.*")
-    input.cycle = vkt.Table("Barge cycle", default=[dict(name=b["name"], **DEFAULT_CYCLE) for b in DEFAULT_BARGES])
-    input.cycle.name = vkt.TextField("Barge")
-    input.cycle.loading_h = vkt.NumberField("Loading per monopile", suffix="h")
-    input.cycle.sailing_h = vkt.NumberField("Sailing to port", suffix="h")
-    input.cycle.discharging_h = vkt.NumberField("Discharging per monopile", suffix="h")
-    input.cycle.return_h = vkt.NumberField("Sailing back", suffix="h")
+    # ---------------- Cargo-cycle: weight classes and tide matrix
+    cargo = vkt.Tab("Cargo-cycle")
+    cargo.class_text = vkt.Text("### Cargo weight classes\n*From weight <= weight < to weight.*")
+    cargo.classes = vkt.Table("Cargo weight classes", default=DEFAULT_CLASSES)
+    cargo.classes.name = vkt.TextField("Code")
+    cargo.classes.from_t = vkt.NumberField("From", suffix="t")
+    cargo.classes.to_t = vkt.NumberField("To", suffix="t")
+    cargo.matrix_text = vkt.Text(
+        "### Tide levels for load-in (cm)\n*Rows: cargo classes. Columns: barges - first the **Single** "
+        "configuration (one monopile on board), then the **Double** configuration (two monopiles). The value is the "
+        "tide level needed for the heaviest monopile on board; 'x' = configuration not possible.*")
+    cargo.columns = vkt.OutputField("Columns", value=_matrix_columns, flex=100)
+    cargo.matrix = vkt.Table("Tide levels for load-in (cm)", default=DEFAULT_MATRIX)
+    cargo.matrix.code = vkt.TextField("Code")
+    for _k, _col in enumerate(S_COLS):
+        setattr(cargo.matrix, _col, vkt.TextField(f"Single {_k + 1}"))
+    for _k, _col in enumerate(D_COLS):
+        setattr(cargo.matrix, _col, vkt.TextField(f"Double {_k + 1}"))
 
-    input.matrix_text = vkt.Text(
-        "### Tide restrictions matrix\n*Minimum required tide level (cm) at the marshalling port for discharging. "
-        "Columns 1-6 = the 1st to 6th cargo class of the table above (default A-D). Single: one monopile on "
-        "board. Double: two monopiles, the class of the heaviest monopile counts. 'x' (or empty) = not "
-        "permitted.*")
-    input.tide_matrix = vkt.Table("Tide restrictions (cm)", default=DEFAULT_MATRIX)
-    input.tide_matrix.name = vkt.TextField("Barge")
-    input.tide_matrix.transport = vkt.OptionField("Transport", options=[SINGLE, DOUBLE])
-    for _k, _col in enumerate(CLASS_COLS):
-        setattr(input.tide_matrix, _col, vkt.TextField(f"Class {_k + 1}"))
+    # ---------------- Fabricator: yard, berths, monopile schedule
+    fabricator = vkt.Tab("Fabricator")
+    fabricator.yard_text = vkt.Text("### Fabrication yard")
+    fabricator.yard_capacity = vkt.IntegerField("Fabrication yard storage capacity", suffix="MP", default=6, min=1,
+                                                flex=50)
+    fabricator.fab_berths = vkt.IntegerField("Number of load-out berths available", default=1, min=1, flex=50)
+    fabricator.ready = vkt.OptionField("Monopile produced and ready for load-out on", options=[READY_EARLIEST,
+                                                                                              READY_LATEST],
+                                       default=READY_EARLIEST, flex=100)
+    fabricator.mp_text = vkt.Text("### Monopile schedule\n*Dates as dd/mm/yyyy.*")
+    fabricator.monopiles = vkt.Table("Monopile schedule", default=DEFAULT_MONOPILES)
+    fabricator.monopiles.number = vkt.IntegerField("No.")
+    fabricator.monopiles.name = vkt.TextField("Location")
+    fabricator.monopiles.weight_t = vkt.NumberField("Weight", suffix="t")
+    # dates as text: VIKTOR does not allow date fields in a table
+    fabricator.monopiles.earliest = vkt.TextField("Earliest (dd/mm/yyyy)")
+    fabricator.monopiles.latest = vkt.TextField("Latest (dd/mm/yyyy)")
 
-    input.delivery_text = vkt.Text("### Delivery schedule\n*Monopiles available for load-out at the fabrication "
-                                   "yard from the earliest date; load-out must be completed by the latest date.*")
-    input.deliveries = vkt.Table("Delivery schedule", default=DEFAULT_DELIVERIES)
-    input.deliveries.number = vkt.IntegerField("Load-out no.")
-    input.deliveries.name = vkt.TextField("Location")
-    input.deliveries.weight_t = vkt.NumberField("Weight", suffix="t")
-    # dates as text dd/mm/yyyy: VIKTOR does not allow date fields in a table
-    input.deliveries.earliest = vkt.TextField("Earliest (dd/mm/yyyy)")
-    input.deliveries.latest = vkt.TextField("Latest (dd/mm/yyyy)")
+    # ---------------- Marshalling port: berths, tide
+    port = vkt.Tab("Marshalling port")
+    port.port_text = vkt.Text("### Marshalling port")
+    port.port_berths = vkt.IntegerField("Number of load-in berths available", default=1, min=1)
+    port.tide_text = vkt.Text("### Tide at the marshalling port")
+    port.tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
+    port.tide_note = vkt.Text("*File format: .csv, comma separated, header row, then one row per time (e.g. "
+                              "hourly): column 1 date-time as 2026-01-01 00:00 (or 01/01/2026 00:00, day first), "
+                              "column 2 tide level in cm above chart datum (CD). The data of one year is repeated "
+                              "for every other year (same calendar date and time).*")
 
-    input.planning_text = vkt.Text("### Planning")
-    input.yard_capacity = vkt.IntegerField("Fabrication yard capacity", suffix="monopiles", default=6, min=1,
-                                           flex=50, description="Max. number of produced monopiles stored at the "
-                                                                "yard. When full, production waits for a load-out.")
-    input.start_after = vkt.IntegerField("Barges start when produced", suffix="monopiles", default=2, min=1,
-                                         flex=50, description="The barges start at the yard on the earliest date of "
-                                                              "this monopile (load-out order).")
-    input.start_info = vkt.OutputField("Start of transport", value=_start_text, flex=100)
-    input.max_wait_second = vkt.NumberField("Double barge: max. wait for the second monopile", suffix="h",
-                                            default=24, min=0,
-                                            description="A Double barge waits at most this long (after loading "
-                                                        "the first monopile) for the next monopile; otherwise it "
-                                                        "sails with one.")
-
-    input.tide_text = vkt.Text("### Tide at the marshalling port (load-in)")
-    input.tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
-    input.tide_note = vkt.Text("*File format: .csv, comma separated, header row, then one row per time (e.g. "
-                               "hourly): column 1 date-time as 2026-01-01 00:00 (or 01/01/2026 00:00, day first), "
-                               "column 2 tide level in cm above chart datum (CD). The data of one year is repeated "
-                               "for every other year (same calendar date and time).*")
+    # ---------------- Planning: barge start dates
+    planning = vkt.Tab("Planning")
+    planning.start_text = vkt.Text("### Barge start\n*The barges are assumed to start at the fabricator yard on "
+                                   "their start date. With one load-out berth, barges wait until the berth is "
+                                   "free.*")
+    planning.starts = vkt.Table("Barge start", default=DEFAULT_STARTS)
+    planning.starts.name = vkt.TextField("Barge")
+    planning.starts.start = vkt.TextField("Start (dd/mm/yyyy)")
+    planning.max_wait_second = vkt.NumberField("Double barge: max. wait for the second monopile", suffix="h",
+                                               default=24, min=0,
+                                               description="A Double barge waits at most this long after loading "
+                                                           "the first monopile for the next one; otherwise it sails "
+                                                           "with one.")
 
 
 # ---------------------------------------------------------------- inputs -> engine
@@ -182,7 +224,7 @@ def _tide_bytes(params) -> bytes:
 
 
 def _to_date(v):
-    """Date from a date field or from text dd/mm/yyyy (also d-m-yyyy, d.m.yyyy or yyyy-mm-dd)."""
+    """Date from text dd/mm/yyyy (also d-m-yyyy, d.m.yyyy or yyyy-mm-dd)."""
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
@@ -205,71 +247,71 @@ def _cm(text, where: str):
     try:
         return float(t)
     except ValueError:
-        raise vkt.UserError(f"Tide restrictions matrix, {where}: '{text}' is not a number or 'x'.")
+        raise vkt.UserError(f"Tide levels for load-in, {where}: '{text}' is not a number or 'x'.")
 
 
-def _inputs(params):
+def _inputs(p):
     classes = [CargoClass(str(r.name or "").strip() or f"Class {k + 1}", float(r.from_t or 0), float(r.to_t or 0))
-               for k, r in enumerate(params.classes or [])]
-    if len(classes) > MAX_CLASSES:
-        raise vkt.UserError(f"At most {MAX_CLASSES} cargo classes (columns of the tide restrictions matrix).")
-    cycle = {str(r.name or "").strip(): r for r in (params.cycle or [])}
-    matrix = {(str(r.name or "").strip(), r.transport): r for r in (params.tide_matrix or [])}
+               for k, r in enumerate(p.classes or [])]
+    fleet = _fleet(p)
+    if len(fleet) > MAX_BARGES:
+        raise vkt.UserError(f"At most {MAX_BARGES} barges (columns of the tide level table).")
+    matrix = {str(r.code or "").strip(): r for r in (p.matrix or [])}
+    missing = [c.name for c in classes if c.name not in matrix]
+    starts = {str(r.name or "").strip(): r.start for r in (p.starts or [])}
+    if missing or any(n not in starts for n, _ in fleet):
+        raise vkt.UserError("The tide level table or the barge start table does not match the barges / cargo classes "
+                            "- press 'Update tide matrix and barge start tables' (tab Input).")
     barges = []
-    for r in params.barges or []:
-        name = str(r.name or "").strip()
-        if not name:
-            continue
-        cyc = cycle.get(name)
-        single = matrix.get((name, SINGLE))
-        double = matrix.get((name, DOUBLE))
-        if cyc is None or single is None or (r.configuration == DOUBLE and double is None):
-            raise vkt.UserError(f"Barge {name} is missing in the barge cycle or tide restrictions table - press "
-                                f"'Update barge cycle and tide restriction tables'.")
-
-        def req(row, transport):
-            if row is None:
-                return {}
-            return {c.name: _cm(row.get(col), f"{name} {transport} class {c.name}")
-                    for c, col in zip(classes, CLASS_COLS)}
-
-        barges.append(Barge(name=name, configuration=r.configuration or SINGLE,
-                            loading_h=float(cyc.loading_h or 0), sailing_h=float(cyc.sailing_h or 0),
-                            discharging_h=float(cyc.discharging_h or 0), return_h=float(cyc.return_h or 0),
-                            single_cm=req(single, SINGLE),
-                            double_cm=req(double, DOUBLE) if r.configuration == DOUBLE else {}))
+    for k, (name, conf) in enumerate(fleet):
+        try:
+            start = _to_date(starts[name])
+        except ValueError:
+            start = None
+        if start is None:
+            raise vkt.UserError(f"Barge start: '{starts[name]}' for {name} is not a valid date (dd/mm/yyyy).")
+        single = {c.name: _cm(matrix[c.name].get(S_COLS[k]), f"Single {k + 1} ({name}) class {c.name}")
+                  for c in classes}
+        double = ({c.name: _cm(matrix[c.name].get(D_COLS[k]), f"Double {k + 1} ({name}) class {c.name}")
+                   for c in classes} if conf == DOUBLE else {})
+        barges.append(Barge(name=name, configuration=conf, start=datetime.combine(start, datetime.min.time()),
+                            single_cm=single, double_cm=double))
     monopiles = []
-    for r in params.deliveries or []:
+    for r in p.monopiles or []:
         if not (r.name or r.weight_t):
             continue
         try:
             e, la = _to_date(r.earliest), _to_date(r.latest)
         except ValueError as exc:
-            raise vkt.UserError(f"Delivery schedule: monopile {r.number} ({r.name}): date '{exc}' is not "
-                                f"valid - use dd/mm/yyyy, e.g. 06/03/2028.")
+            raise vkt.UserError(f"Monopile schedule: monopile {r.number} ({r.name}): date '{exc}' is not valid - "
+                                f"use dd/mm/yyyy, e.g. 06/03/2028.")
         if e is None or la is None:
-            raise vkt.UserError(f"Delivery schedule: monopile {r.number} ({r.name}) needs an earliest and latest date.")
+            raise vkt.UserError(f"Monopile schedule: monopile {r.number} ({r.name}) needs an earliest and latest date.")
         monopiles.append(Monopile(int(r.number or 0), str(r.name or ""), float(r.weight_t or 0), e, la))
-    return barges, classes, monopiles
+    cycle = Cycle(distance_nm=float(p.distance_nm or 0), speed_kn=float(p.speed_kn or 0),
+                  loadout_h=float(p.loadout_h or 0), dep_fab_h=float(p.dep_fab_h or 0), entry_h=float(p.entry_h or 0),
+                  loadin_h=float(p.loadin_h or 0), allowance_h=float(p.allowance_h or 0), dep_h=float(p.dep_h or 0))
+    return barges, classes, monopiles, cycle
 
 
 _CACHE: dict = {}
 
 
 def _schedule(params):
-    data = _tide_bytes(params)
-    key = hashlib.sha1((json.dumps({k: v for k, v in params.items() if k != "tide_file"}, default=str,
-                                   sort_keys=True) + hashlib.sha1(data).hexdigest()).encode()).hexdigest()
+    p = _flat(params)
+    data = _tide_bytes(p)
+    key = hashlib.sha1((json.dumps({k: v for k, v in p.items() if k != "tide_file"}, default=str, sort_keys=True)
+                        + hashlib.sha1(data).hexdigest()).encode()).hexdigest()
     if key not in _CACHE:
         if len(_CACHE) > 20:
             _CACHE.clear()
-        barges, classes, monopiles = _inputs(params)
+        barges, classes, monopiles, cycle = _inputs(p)
         try:
-            tide = load_tide(data)
-            _CACHE[key] = plan_transport(barges=barges, classes=classes, monopiles=monopiles, tide=tide,
-                                         max_wait_second_h=float(params.max_wait_second or 0),
-                                         yard_capacity=int(params.yard_capacity) if params.yard_capacity else None,
-                                         start_after_n=int(params.start_after or 1))
+            _CACHE[key] = plan_transport(
+                barges=barges, classes=classes, monopiles=monopiles, tide=load_tide(data), cycle=cycle,
+                yard_capacity=int(p.yard_capacity) if p.yard_capacity else None,
+                fab_berths=int(p.fab_berths or 1), port_berths=int(p.port_berths or 1),
+                ready=p.ready or READY_EARLIEST, max_wait_second_h=float(p.max_wait_second or 0))
         except PlanningError as exc:
             raise vkt.UserError(str(exc))
     return _CACHE[key]
@@ -278,13 +320,12 @@ def _schedule(params):
 # ---------------------------------------------------------------- figures
 def _summary(res) -> str:
     n_double = sum(t.mode == DOUBLE for t in res.trips)
-    late = f" | <span style='color:#d62728'>{res.late_count} late load-out(s)</span>" if res.late_count else \
-        " | all load-outs on time"
+    txt = (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
+           f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y} | tidal wait {res.total_tidal_wait_h:.0f} h"
+           f" | berth wait {res.total_berth_wait_h:.0f} h")
     if res.production_delay_count:
-        late += (f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>")
-    return (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
-            f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y} | "
-            f"tidal wait {res.total_tidal_wait_h:.0f} h{late}")
+        txt += f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>"
+    return txt
 
 
 def _layout_title(fig, lines, height):
@@ -301,14 +342,14 @@ def build_gantt(res) -> go.Figure:
                       category_orders={"Category": list(COLORS)})
     fig.update_yaxes(categoryorder="array", categoryarray=[b.name for b in res.barges][::-1], title_text="")
     fig.update_xaxes(rangeslider_visible=True)
-    _layout_title(fig, ["<b>Transport schedule</b>", _summary(res)], 560)
+    _layout_title(fig, ["<b>Transport schedule</b>", _summary(res)], 600)
     fig.update_layout(margin=dict(l=100, t=80))
     return fig
 
 
-def build_loadin(res) -> dict:
-    """Tide at the marshalling port with each load-in: required level (line from arrival to end of discharging)
-    and the discharging moment; below the port activities (tidal wait / discharging) per barge."""
+def build_loadin(res) -> go.Figure:
+    """Tide at the marshalling port with every load-in (required level on a rising tide) and below the port
+    activities (tidal wait / load-in) per barge."""
     tide = res.tide
     t0 = min(t.arrival for t in res.trips) - timedelta(hours=12)
     t1 = res.finish + timedelta(hours=12)
@@ -319,26 +360,18 @@ def build_loadin(res) -> dict:
                              line=dict(color="#1f77b4", width=1.2)), row=1, col=1)
     barge_colors = px.colors.qualitative.Dark2
     for k, b in enumerate(res.barges):
-        trips = [t for t in res.trips if t.barge == b.name]
-        if not trips:
+        loadins = [(t, x) for t in res.trips if t.barge == b.name for x in t.loadins]
+        if not loadins:
             continue
         color = barge_colors[k % len(barge_colors)]
-        xs, ys = [], []
-        for t in trips:
-            xs += [t.arrival, t.discharge_end, None]
-            ys += [t.required_cm, t.required_cm, None]
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=f"{b.name} required tide",
-                                 line=dict(color=color, width=3), hoverinfo="skip", legendgroup=b.name),
-                      row=1, col=1)
         fig.add_trace(go.Scatter(
-            x=[t.discharge_start for t in trips], y=[t.required_cm for t in trips], mode="markers",
-            name=f"{b.name} load-in", marker=dict(symbol="triangle-down", size=11, color=color),
-            legendgroup=b.name, hoverinfo="text",
-            text=[f"{b.name} trip {t.trip_no}: {' + '.join(m.name for m in t.monopiles)} ({t.mode.lower()}, "
-                  f"class {t.cargo_class})<br>Arrival {t.arrival:%d-%m %H:%M} | load-in {t.discharge_start:%d-%m %H:%M}"
-                  f"<br>Required tide {t.required_cm:.0f} cm | tidal wait {t.tidal_wait_h:.1f} h" for t in trips]),
-            row=1, col=1)
-    for cat in (CAT_TIDE, CAT_DISCHARGE):
+            x=[x[3] for _, x in loadins], y=[x[1] for _, x in loadins], mode="markers",
+            name=f"{b.name} load-in", marker=dict(symbol="triangle-up", size=11, color=color),
+            hoverinfo="text",
+            text=[f"{b.name} trip {t.trip_no} ({t.mode.lower()}): load-in {m.name} (class {m.cargo_class})<br>"
+                  f"Start {s:%d-%m %H:%M} on a rising tide >= {lvl:.0f} cm | tidal wait {w:.1f} h"
+                  for t, (m, lvl, w, s, e) in loadins]), row=1, col=1)
+    for cat in (CAT_TIDE, CAT_LOADIN):
         segs = [s for s in res.segments if s["category"] == cat]
         if segs:
             fig.add_trace(go.Bar(
@@ -354,35 +387,31 @@ def build_loadin(res) -> dict:
     if tide.repeated:
         note = (f"<br><sup>Tidal data {tide.data_start:%Y-%m-%d} - {tide.data_end:%Y-%m-%d} repeated for other "
                 f"years</sup>")
+    n = sum(len(t.loadins) for t in res.trips)
     _layout_title(fig, ["<b>Load-in at the marshalling port</b>",
-                        f"{len(res.trips)} load-ins | tidal wait {res.total_tidal_wait_h:.0f} h "
-                        f"(average {res.total_tidal_wait_h / len(res.trips):.1f} h per trip){note}"], 650)
+                        f"{n} load-ins | tidal wait {res.total_tidal_wait_h:.0f} h "
+                        f"(average {res.total_tidal_wait_h / n:.1f} h per load-in){note}"], 650)
     fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=90))
     return fig
 
 
 def build_table(res) -> go.Figure:
-    by_mp = {}
-    for t in res.trips:
-        for m in t.monopiles:
-            by_mp[m.number] = t
-    header = ["No.", "Location", "Weight (t)", "Class", "Earliest", "Latest", "Produced", "Barge / trip", "Transport",
-              "Load-out done", "Arrival port", "Required tide (cm)", "Tidal wait (h)", "Load-in", "On time"]
+    by_mp = {m.number: t for t in res.trips for m in t.monopiles}
+    header = ["No.", "Location", "Weight (t)", "Class", "Ready", "Produced", "Barge / trip", "Transport",
+              "Load-out done", "Arrival port", "Load-in", "Required tide (cm)", "Tidal wait (h)"]
     rows = []
     for m in res.monopiles:
         t = by_mp[m.number]
-        rows.append([m.number, m.name, f"{m.weight_t:g}", m.cargo_class, f"{m.earliest:%d-%m-%Y}",
-                     f"{m.latest:%d-%m-%Y}",
-                     f"{m.produced:%d-%m-%Y %H:%M}" + (f" (+{m.production_delay_h:.0f} h)" if m.production_delay_h > 1e-9
-                                                       else ""),
-                     f"{t.barge} / {t.trip_no}", t.mode,
-                     f"{t.loaded_out[m.number]:%d-%m-%Y %H:%M}", f"{t.arrival:%d-%m-%Y %H:%M}",
-                     f"{t.required_cm:.0f}", f"{t.tidal_wait_h:.1f}", f"{t.discharge_start:%d-%m-%Y %H:%M}",
-                     "LATE" if m.number in t.late else "yes"])
+        rows.append([m.number, m.name, f"{m.weight_t:g}", m.cargo_class, f"{m.ready:%d-%m-%Y}",
+                     f"{m.produced:%d-%m-%Y %H:%M}" + (f" (+{m.production_delay_h:.0f} h)"
+                                                       if m.production_delay_h > 1e-9 else ""),
+                     f"{t.barge} / {t.trip_no}", t.mode, f"{m.loaded_out:%d-%m-%Y %H:%M}",
+                     f"{t.arrival:%d-%m-%Y %H:%M}", f"{m.loadin_start:%d-%m-%Y %H:%M}", f"{m.loadin_cm:.0f}",
+                     f"{m.loadin_wait_h:.1f}"])
     cols = list(map(list, zip(*rows)))
-    late_color = ["#f8d0d0" if r[-1] == "LATE" or "(+" in r[6] else "white" for r in rows]
+    color = ["#f8d0d0" if "(+" in r[5] else "white" for r in rows]
     fig = go.Figure(go.Table(header=dict(values=header, align="left", fill_color="#e6e6e6"),
-                             cells=dict(values=cols, align="left", fill_color=[late_color] * len(header))))
+                             cells=dict(values=cols, align="left", fill_color=[color] * len(header))))
     per_barge = " | ".join(f"{b.name}: {sum(t.barge == b.name for t in res.trips)} trips" for b in res.barges)
     _layout_title(fig, ["<b>Monopile schedule</b>", f"{_summary(res)}<br>{per_barge}"], 800)
     fig.update_layout(margin=dict(t=95, l=10, r=10))
@@ -397,19 +426,19 @@ def build_yard(res) -> go.Figure:
                                fill="tozeroy", fillcolor="rgba(31,119,180,0.15)"))
     if res.yard_capacity:
         fig.add_hline(y=res.yard_capacity, line=dict(color="#d62728", dash="dash"),
-                      annotation_text=f"Yard capacity {res.yard_capacity}", annotation_position="top left")
+                      annotation_text=f"Storage capacity {res.yard_capacity}", annotation_position="top left")
     delayed = [m for m in res.monopiles if m.production_delay_h > 1e-9]
     if delayed:
         fig.add_trace(go.Scatter(
             x=[m.produced for m in delayed], y=[res.yard_capacity] * len(delayed), mode="markers",
             name="Production delayed (yard full)", marker=dict(symbol="x", size=10, color="#d62728"),
-            text=[f"{m.number} {m.name}: earliest {m.earliest:%d-%m-%Y}, produced {m.produced:%d-%m-%Y %H:%M} "
+            text=[f"{m.number} {m.name}: ready {m.ready:%d-%m-%Y}, produced {m.produced:%d-%m-%Y %H:%M} "
                   f"(+{m.production_delay_h:.0f} h)" for m in delayed], hoverinfo="text"))
     peak = max(n for _, n in stock)
     _layout_title(fig, ["<b>Fabrication yard stock</b>",
                         f"Max. {peak} monopiles stored" + (f" (capacity {res.yard_capacity})" if res.yard_capacity
                                                            else "") +
-                        f" | {res.production_delay_count} production delay(s) | barges start {res.start:%d %b %Y}"], 520)
+                        f" | {res.production_delay_count} production delay(s)"], 520)
     fig.update_yaxes(title_text="Monopiles at the yard", dtick=1, rangemode="tozero")
     fig.update_layout(margin=dict(t=80), hovermode="x unified")
     return fig
@@ -421,28 +450,42 @@ class TransportPlan(vkt.Controller):
     parametrization = Parametrization
 
     def update_tables(self, params, **kwargs):
-        """Barge cycle and tide restrictions tables in line with the barge fleet (existing values kept)."""
-        names = [(str(r.name or "").strip(), r.configuration or SINGLE) for r in (params.input.barges or [])]
-        names = [(n, c) for n, c in names if n]
-        cyc = {str(r.name or "").strip(): dict(r) for r in (params.input.cycle or [])}
-        mat = {(str(r.name or "").strip(), r.transport): dict(r) for r in (params.input.tide_matrix or [])}
-        cycle = [cyc.get(n) or dict(name=n, **DEFAULT_CYCLE) for n, _ in names]
-        matrix = [mat.get((n, SINGLE)) or _matrix_row(n, SINGLE, DEFAULT_SINGLE) for n, _ in names]
-        matrix += [mat.get((n, DOUBLE)) or _matrix_row(n, DOUBLE, DEFAULT_DOUBLE) for n, c in names if c == DOUBLE]
-        return vkt.SetParamsResult({"input": {"cycle": cycle, "tide_matrix": matrix}})
+        """Tide level table (rows = cargo classes) and barge start table in line with the fleet / classes;
+        existing values are kept, new rows get the default values."""
+        fleet = _fleet(params)
+        codes = [str(r.name or "").strip() for r in (params.cargo.classes or []) if str(r.name or "").strip()]
+        old = {str(r.code or "").strip(): dict(r) for r in (params.cargo.matrix or [])}
+        matrix = []
+        for code in codes:
+            row = old.get(code) or _matrix_row(code, fleet)
+            for k, (name, conf) in enumerate(fleet):            # new barge columns get defaults, removed are emptied
+                default = _matrix_row(code, fleet)
+                if not str(row.get(S_COLS[k]) or "").strip():
+                    row[S_COLS[k]] = default[S_COLS[k]]
+                if conf == DOUBLE and not str(row.get(D_COLS[k]) or "").strip():
+                    row[D_COLS[k]] = default[D_COLS[k]]
+                if conf != DOUBLE:
+                    row[D_COLS[k]] = ""
+            for k in range(len(fleet), MAX_BARGES):
+                row[S_COLS[k]] = row[D_COLS[k]] = ""
+            matrix.append(row)
+        starts_old = {str(r.name or "").strip(): r.start for r in (params.planning.starts or [])}
+        first = starts_old.get(fleet[0][0]) if fleet else None
+        starts = [dict(name=n, start=starts_old.get(n) or first or "15/03/2028") for n, _ in fleet]
+        return vkt.SetParamsResult({"cargo": {"matrix": matrix}, "planning": {"starts": starts}})
 
     @vkt.PlotlyView("Planning", duration_guess=1)
     def planning_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_gantt(_schedule(params.input)).to_json())
+        return vkt.PlotlyResult(build_gantt(_schedule(params)).to_json())
 
     @vkt.PlotlyView("Load-in", duration_guess=1)
     def loadin_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_loadin(_schedule(params.input)).to_json())
+        return vkt.PlotlyResult(build_loadin(_schedule(params)).to_json())
 
     @vkt.PlotlyView("Yard", duration_guess=1)
     def yard_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_yard(_schedule(params.input)).to_json())
+        return vkt.PlotlyResult(build_yard(_schedule(params)).to_json())
 
     @vkt.PlotlyView("Table", duration_guess=1)
     def table_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_table(_schedule(params.input)).to_json())
+        return vkt.PlotlyResult(build_table(_schedule(params)).to_json())
