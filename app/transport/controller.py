@@ -206,13 +206,13 @@ class Parametrization(vkt.Parametrization):
         "- A load-in may only **start on a rising tide**.  \n"
         "- The tide must be **at or above the required level from the start until the end of the load-in** "
         "(load-in duration per MP). It may pass high water during the load-in, but not drop below the level.  \n"
-        "- The required level depends on the load configuration (tab Cargo-cycle). If the tide does not stay high "
+        "- The required level depends on the load configuration (tab Cycle). If the tide does not stay high "
         "enough for the whole load-in, the barge waits for the next suitable tide.  \n"
         "- With two monopiles on board, the first load-in uses the Double level; after it, the barge waits for the "
         "next tide for the second load-in, at the Single level of the remaining monopile.*")
 
     # ---------------- Cargo-cycle: weight classes and tide matrix
-    cargo = vkt.Tab("Cargo-cycle")
+    cargo = vkt.Tab("Cycle")
     cargo.class_text = vkt.Text("### Cargo weight classes\n*From weight <= weight < to weight.*")
     cargo.classes = vkt.Table("Cargo weight classes", default=DEFAULT_CLASSES)
     cargo.classes.name = vkt.TextField("Code")
@@ -236,7 +236,7 @@ class Parametrization(vkt.Parametrization):
             setattr(cargo, _table_name(_n, _d), _table)
 
     # ---------------- Fabricator: yard, berths, monopile schedule
-    fabricator = vkt.Tab("Fabricator")
+    fabricator = vkt.Tab("Fab-P")
     fabricator.yard_text = vkt.Text("### Fabrication yard")
     fabricator.yard_name = vkt.TextField("Name fabrication yard", default="Busan", flex=34)
     fabricator.yard_lat = vkt.NumberField("Latitude", suffix="°N", default=35.10, num_decimals=4, flex=33)
@@ -257,7 +257,7 @@ class Parametrization(vkt.Parametrization):
     fabricator.monopiles.latest = vkt.TextField("Latest (dd/mm/yyyy)")
 
     # ---------------- Marshalling port: berths, tide
-    port = vkt.Tab("Marshalling port")
+    port = vkt.Tab("Mar-P")
     port.port_text = vkt.Text("### Marshalling port")
     port.port_name = vkt.TextField("Name marshalling port", default="Gunsan", flex=34)
     port.port_lat = vkt.NumberField("Latitude", suffix="°N", default=35.98, num_decimals=4, flex=33)
