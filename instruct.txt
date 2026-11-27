@@ -1,16 +1,12 @@
-on input (bunder barge fleet) for default there are only three barges not 6
-barges can either carry 1 or 2 monopiles (double config) or just 1 monopile (single config)
-but barges in default are only 3
+on barge fleet remove "up to 6 barges"
 
-cargo-cyle
-tide levels for load-in table
-rename single barge to sb1, sb2, sb3 etc 
-and rename double barge to db1, db2, db3 etc
-do not leave empty columns for undefined barges
+under planning 
+selection between complete gantt of the project as is now or a detail
 
+if detail is selected then select a barge and a trip
+the chart zhould now update zooming over the load-in and displying the full tidal curve with levels
+also display on the bottom the hours and show the load-in is exactly within the hours required
 
-why do i see gaps in the gantt chart of the schedule
-when a barge arrives at a fabricator and there are no monopiles add waiting for fabricator
-
-also add a stock curve tab showing monopiles at fabricator and marshalling port
+used "double barge max wait" as title and put a small note underneath explaining what this means
+(max wait for fabricator )
 
