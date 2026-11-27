@@ -782,8 +782,11 @@ def build_cycles(res) -> go.Figure:
                      tickfont=dict(family="Consolas, 'Courier New', monospace", size=11, color="#222"),
                      ticklabelstandoff=6)
     fig.update_xaxes(title_text="Days from the start of the cycle", range=[0, max(days) * 1.18])
-    fig.update_layout(barmode="overlay", bargap=0.2, margin=dict(t=115, l=30 + 7 * (w_name + w_trip + 8)),
-                      hovermode="closest")
+    # legend horizontally under the chart, so the bars use the full width
+    fig.update_layout(barmode="overlay", bargap=0.2, margin=dict(t=115, l=30 + 7 * (w_name + w_trip + 8), r=20, b=130),
+                      hovermode="closest",
+                      legend=dict(orientation="h", x=0, xanchor="left", y=-0.09, yanchor="top", font=dict(size=11),
+                                  traceorder="normal"))
     return fig
 
 
