@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 TIME_STEP_H = 1 / 12     # 5 min search step
-MAX_WAIT_H = 24 * 31     # give up after a month
+MAX_WAIT_H = 24 * 400    # search up to a year ahead (long load-ins can have windows months apart)
 
 
 class PlanningError(Exception):

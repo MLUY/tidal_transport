@@ -47,6 +47,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 5. Load-in starts on a rising tide and the tide stays at or above the level of the load configuration for the
    whole load-in (Double level with two monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
    the remaining monopile.
+   The search looks up to a year ahead, so with a long load-in duration the barge waits (possibly months) until
+   a suitable window. A configuration whose level is never held long enough in the tidal data is not used (a
+   Double trip then sails single); if no barge can do a monopile, a message gives the longest window available.
 6. After the last load-in: general load-in time allowance, port departure, sailing back.
 7. A barge back at the fabricator with no monopile ready is shown as *Waiting for fabricator* (no gaps in
    the Gantt chart).

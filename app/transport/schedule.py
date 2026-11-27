@@ -305,7 +305,24 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
     if tide.can_repeat():
         tide = tide.repeated_to_cover(first - timedelta(days=2),
                                       datetime.combine(max(m.latest for m in mps), datetime.min.time())
-                                      + timedelta(days=400))
+                                      + timedelta(days=800))
+
+    # longest time (h) the tide stays at or above a level, starting on a rising tide, in the tidal data: a load-in
+    # configuration is only possible when this is at least the load-in duration
+    _longest: dict = {}
+
+    def longest_window(level: float) -> float:
+        if level not in _longest:
+            hrs = np.arange(0.0, float(tide.hours[-1]), TIME_STEP_H)
+            above = tide.level_cm(hrs) >= level
+            edges = np.flatnonzero(np.diff(np.concatenate([[0], above.astype(int), [0]])))
+            runs = (edges[1::2] - edges[::2]) * TIME_STEP_H
+            _longest[level] = float(runs.max()) if runs.size else 0.0
+        return _longest[level]
+
+    def possible(level) -> bool:
+        # margin of two search steps (10 min): the window must really hold the whole load-in
+        return level is not None and longest_window(level) >= cycle.loadin_h + 2 * TIME_STEP_H
 
     def produced(k: int) -> datetime:
         t = mps[k].ready
@@ -331,18 +348,25 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
             raise PlanningError(f"{label}: the schedule runs past the end of the tidal data ({tide.end:%Y-%m-%d}). "
                                 f"Upload tidal data covering the period, or at least one full year.")
         except PlanningError:
-            raise PlanningError(f"{label}: within a month the tide never stays at or above {level:.0f} cm for the whole load-in "
-                                f"({cycle.loadin_h:g} h, starting on a rising tide). "
-                                f"Check the tide matrix and the tidal data.")
+            raise PlanningError(f"{label}: within a year the tide never stays at or above {level:.0f} cm for the whole "
+                                f"load-in ({cycle.loadin_h:g} h, starting on a rising tide). Shorten the load-in "
+                                f"duration, lower the tide level (tab Cargo-cycle) or check the tidal data.")
 
     i = 0
     while i < len(mps):
         mp = mps[i]
         avail = mp.produced = produced(i)
-        options = [b for b in barges if b.single_cm.get(mp.cargo_class) is not None]
-        if not options:
+        allowed = [b for b in barges if b.single_cm.get(mp.cargo_class) is not None]
+        if not allowed:
             raise PlanningError(f"No barge may carry monopile {mp.number} ({mp.name}, {mp.weight_t:g} t, class "
                                 f"{mp.cargo_class}): all Single values for this class are 'x'.")
+        options = [b for b in allowed if possible(b.single_cm[mp.cargo_class])]
+        if not options:
+            lvl = min(b.single_cm[mp.cargo_class] for b in allowed)
+            raise PlanningError(
+                f"Monopile {mp.number} ({mp.name}, class {mp.cargo_class}): with this tidal data the tide never stays "
+                f"at or above {lvl:.0f} cm for {cycle.loadin_h:g} h (longest {longest_window(lvl):.1f} h). Shorten the "
+                f"load-in duration, lower the tide level (tab Cargo-cycle) or check the tidal data.")
         berth_free = min(fab_free)
 
         def pair_for(b, load_start):
@@ -350,7 +374,7 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
                 return None
             nxt = mps[i + 1]
             cls = _heaviest(mp.cargo_class, nxt.cargo_class, classes)
-            if b.double_cm.get(cls) is None:
+            if not possible(b.double_cm.get(cls)):      # 'x', or never long enough above the Double level
                 return None
             if produced(i + 1) > load_start + h(cycle.loadout_h + max_wait_second_h):
                 return None
