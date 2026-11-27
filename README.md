@@ -14,9 +14,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   configuration (level for the heaviest monopile on board; `x` = not possible). The line *Columns* shows which
   barge each column is. Only columns of defined barges are shown (VIKTOR cannot hide table columns, so there is
   one table per fleet composition and only the matching one is visible).
-- **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
+- **Fabricator**: name and position of the fabrication yard (default Busan, 35.10°N 129.04°E), storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
-- **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
+- **Marshalling port**: name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
   Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
   the calculation and the charts.
 - **Weather**: workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
@@ -55,6 +55,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
   barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
   move to a date, drag in the graph to zoom (also the y-axis), double-click to reset.
+- **Towing**: grey map of Korea with the fabrication yard, the marshalling port and an indicative towing route
+  (display only; the planning uses the towing distance input). Map data: Natural Earth 1:10m (public domain),
+  taken from the world-atlas package (ISC licence), embedded in `app/transport/korea_map.json` - no map service
+  needed.
 - **Stock**: monopiles at the fabricator (with storage capacity and production delays), on the barges and
   delivered at the marshalling port over time.
 - **Table**: per monopile: class, ready / produced, barge / trip, single / double, load-out, arrival, load-in,
