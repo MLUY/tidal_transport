@@ -482,7 +482,7 @@ def optimise_start_dates(barges, kwargs, range_days: int = OPT_RANGE_DAYS):
 def _summary(res) -> str:
     n_double = sum(t.mode == DOUBLE for t in res.trips)
     txt = (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
-           f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y} | tidal wait {res.total_tidal_wait_h:.0f} h"
+           f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y}<br>tidal wait {res.total_tidal_wait_h:.0f} h"
            f" | berth wait {res.total_berth_wait_h:.0f} h | weather {res.total_weather_h:.0f} h")
     if res.production_delay_count:
         txt += f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>"
@@ -504,7 +504,7 @@ def build_gantt(res) -> go.Figure:
     fig.update_yaxes(categoryorder="array", categoryarray=[b.name for b in res.barges][::-1], title_text="")
     fig.update_xaxes(rangeslider_visible=True)
     _layout_title(fig, ["<b>Transport schedule</b>", _summary(res)], 600)
-    fig.update_layout(margin=dict(l=100, t=80))
+    fig.update_layout(margin=dict(l=100, t=100))
     return fig
 
 
@@ -604,7 +604,7 @@ def build_table(res) -> go.Figure:
                              cells=dict(values=cols, align="left", fill_color=[color] * len(header))))
     per_barge = " | ".join(f"{b.name}: {sum(t.barge == b.name for t in res.trips)} trips" for b in res.barges)
     _layout_title(fig, ["<b>Monopile schedule</b>", f"{_summary(res)}<br>{per_barge}"], 800)
-    fig.update_layout(margin=dict(t=95, l=10, r=10))
+    fig.update_layout(margin=dict(t=115, l=10, r=10))
     return fig
 
 
