@@ -1,23 +1,16 @@
+on input (bunder barge fleet) for default there are only three barges not 6
+barges can either carry 1 or 2 monopiles (double config) or just 1 monopile (single config)
+but barges in default are only 3
+
+cargo-cyle
 tide levels for load-in table
-columns give barge names, rows are catagories, values are tide levels
-the values are representative for the heaviest monopile which is allowed to be loaded
-a "x" means this configuration is not possible
-first set of barge names are for single configuration, second set of barge names are for double configuration 
-make sure you identify this difference in the table with as default 
+rename single barge to sb1, sb2, sb3 etc 
+and rename double barge to db1, db2, db3 etc
+do not leave empty columns for undefined barges
 
-     single | double  
-code b1 b2  | b1 b2
-A 520 520 550 550 
-B 540 540 600 600
-C 560 560 x x
-D 580 580 x x
 
-rename barges to b1 b2 b3 in the column headers
+why do i see gaps in the gantt chart of the schedule
+when a barge arrives at a fabricator and there are no monopiles add waiting for fabricator
 
-create a tidal graph output similar to the tidal_planner repository
+also add a stock curve tab showing monopiles at fabricator and marshalling port
 
-Also make a slider to zooms to a certain date and a period
-also enable zooming the y-axis so that the tidal graph is showing
-the bottom of the tidal graph gant bars needs to show the activities of the barges
-vertical red/pink areas need to show where there is tidal delay
-hoover info should be available about barge configuration
