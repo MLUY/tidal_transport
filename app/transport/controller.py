@@ -193,8 +193,9 @@ class Parametrization(vkt.Parametrization):
     input.allowance_h = vkt.NumberField("General load-in time allowance", suffix="h", default=21, min=0, flex=50)
     input.dep_h = vkt.NumberField("Port departure", suffix="h", default=6, min=0, flex=50)
     input.loadin_note = vkt.Text(
-        "*Load-in starts on a rising tide from a particular tide level. This tide level depends on the load "
-        "configuration (tab Cargo-cycle); if the tide level is not reached the barge has to wait. If a barge has two "
+        "*Load-in starts on a rising tide from a particular tide level, and the tide must stay at or above that level "
+        "until the load-in is finished. This tide level depends on the load configuration (tab Cargo-cycle); if "
+        "the tide level is not reached for the whole load-in the barge has to wait. If a barge has two "
         "monopiles loaded and the first one is transferred, it waits until the next tide for the next load-in.*")
 
     # ---------------- Cargo-cycle: weight classes and tide matrix
@@ -528,7 +529,12 @@ def build_detail(res, barge: str, trip_no: int) -> dict:
     level_colors = ["#2ca02c", "#9467bd"]      # same colour for the level line and its 'may start' highlight
     shapes = []
     for k, lvl in enumerate(levels):
-        ok = rising & (level >= lvl)
+        # may start: rising tide now and at or above the level for the whole load-in duration
+        n_ahead = int(round(res.cycle.loadin_h * 12))
+        above = level >= lvl
+        stays = np.array([above[i:i + n_ahead + 1].all() if i + n_ahead < len(above) else False
+                          for i in range(len(above))])
+        ok = rising & stays
         fig.add_trace(go.Scatter(x=times, y=np.where(ok, level, np.nan), mode="lines",
                                  name=f"Rising tide >= {lvl:.0f} cm (load-in may start)",
                                  line=dict(color=level_colors[k % 2], width=6), hoverinfo="skip"), row=1, col=1)
@@ -578,7 +584,7 @@ def build_detail(res, barge: str, trip_no: int) -> dict:
                          for m, lvl, w, s, e in trip.loadins)
     _layout_title(fig, [f"<b>Detail {label}</b> - {trip.mode.lower()} configuration: {mps}",
                         f"Arrival {trip.arrival:%d-%m-%Y %H:%M} | {loadins}<br><sup>Thick line: rising tide at or "
-                        f"above the required level (load-in may start). Green area: load-in, pink area: waiting for "
+                        f"above the required level for the whole load-in after it (load-in may start). Green area: load-in, pink area: waiting for "
                         f"the tide. Thin grid lines: every hour. Zoomed in on the load-in(s); double-click to see the whole port "
                         f"stay.</sup>"], 720)
     fig.update_layout(barmode="overlay", hovermode="closest", margin=dict(t=110, l=230), legend_title_text="",

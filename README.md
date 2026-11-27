@@ -28,8 +28,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure, a
    marshalling port berth from the port entry until the port departure (so also while waiting for the tide).
    When all berths are taken the barge waits.
-5. Load-in starts on a rising tide at or above the level of the load configuration (Double level with two
-   monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
+5. Load-in starts on a rising tide and the tide stays at or above the level of the load configuration for the
+   whole load-in (Double level with two monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
    the remaining monopile.
 6. After the last load-in: general load-in time allowance, port departure, sailing back.
 7. A barge back at the fabricator with no monopile ready is shown as *Waiting for fabricator* (no gaps in

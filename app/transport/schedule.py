@@ -17,8 +17,9 @@ Rules (draft):
 * A Double barge also takes the next monopile when the Double column permits the combination (class of the
   heaviest monopile), it is ready within the allowed waiting time after loading the first, and the yard
   capacity allows it.
-* Load-in starts on a RISING tide at or above the required level: Double column (heaviest class) with two
-  monopiles on board, Single column of the barge with one. With two monopiles, the second load-in waits for the
+* Load-in starts on a RISING tide and the tide stays at or above the required level for the WHOLE load-in
+  (it may pass high water, but not drop below the level before the load-in is finished). Level: Double column
+  (heaviest class) with two monopiles on board, Single column of the barge with one. With two monopiles, the second load-in waits for the
   next tide (after the next low water), now at the Single level of the remaining monopile.
 * Berths: a barge occupies a fabricator load-out berth from the start of loading until the start of the port
   departure, and a marshalling port berth from the start of the port entry until the start of the port
@@ -31,7 +32,7 @@ from datetime import date, datetime, timedelta
 
 import numpy as np
 
-from .tide import TIME_STEP_H, DataEnd, GateRule, PlanningError, TideCurve, wait_for_gate
+from .tide import MAX_WAIT_H, TIME_STEP_H, DataEnd, PlanningError, TideCurve
 
 SINGLE, DOUBLE = "Single", "Double"
 READY_EARLIEST, READY_LATEST = "Earliest date", "Latest date"
@@ -223,9 +224,26 @@ def _heaviest(a: str, b: str, classes: list[CargoClass]) -> str:
     return a if order[a] >= order[b] else b
 
 
-def _rising_rule(level_cm: float) -> GateRule:
-    """Open only on a rising tide at or above the level (falling tide never)."""
-    return GateRule(rising_cm=level_cm, falling_cm=float("inf"), transit_h=0.0)
+def wait_for_loadin(tide: TideCurve, t: datetime, level_cm: float, duration_h: float) -> float:
+    """Smallest wait (h) from t until a load-in can start: the tide is RISING at the start and stays at or above
+    level_cm for the WHOLE load-in (start until start + duration; it may pass high water and fall, but not below
+    the level). Candidate starts every 5 minutes, checked a day at a time (vectorised)."""
+    h0 = tide.to_hours(t)
+    n_off = max(int(np.ceil(duration_h / TIME_STEP_H)), 0) + 1
+    offs = np.linspace(0.0, duration_h, n_off) if duration_h > 0 else np.array([0.0])
+    waits = np.arange(0.0, MAX_WAIT_H + 1e-9, TIME_STEP_H)
+    last = tide.hours[-1]
+    for b in range(0, len(waits), 288):
+        ws = waits[b:b + 288]
+        beyond = h0 + ws + offs[-1] > last
+        starts = h0 + ws
+        ok = tide.rising(starts) & (tide.level_cm(starts[:, None] + offs[None, :]) >= level_cm).all(axis=1)
+        hit = np.flatnonzero(beyond | ok)
+        if hit.size:
+            if beyond[hit[0]]:
+                raise DataEnd()
+            return float(ws[hit[0]])
+    raise PlanningError("no load-in window")
 
 
 def _next_low_water(tide: TideCurve, t: datetime) -> datetime:
@@ -284,12 +302,13 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
 
     def gate(t: datetime, level: float, label: str) -> float:
         try:
-            return wait_for_gate(tide, t, _rising_rule(level))
+            return wait_for_loadin(tide, t, level, cycle.loadin_h)
         except DataEnd:
             raise PlanningError(f"{label}: the schedule runs past the end of the tidal data ({tide.end:%Y-%m-%d}). "
                                 f"Upload tidal data covering the period, or at least one full year.")
         except PlanningError:
-            raise PlanningError(f"{label}: the tide does not reach {level:.0f} cm on a rising tide within a month. "
+            raise PlanningError(f"{label}: within a month the tide never stays at or above {level:.0f} cm for the whole load-in "
+                                f"({cycle.loadin_h:g} h, starting on a rising tide). "
                                 f"Check the tide matrix and the tidal data.")
 
     i = 0
