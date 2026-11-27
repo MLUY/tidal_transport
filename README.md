@@ -17,8 +17,7 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
 - **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
-- **Planning**: start date per barge (barges start at the fabricator yard); max. wait of a Double barge for the
-  second monopile.
+- **Planning**: start date per barge (barges start at the fabricator yard); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
 
 ## Rules (draft)
 1. Monopiles are shipped in number order; each goes on the barge that can start its load-out first.
@@ -37,7 +36,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
    the Gantt chart).
 
 ## Results
-- **Planning**: Gantt per barge with all activities and waits.
+- **Planning**: Gantt per barge with all activities and waits, or (tab Planning, *Planning chart* = Detail of one
+  trip) one barge trip: tidal curve with the required levels, where the tide is rising and high enough (load-in
+  may start), the load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the
+  load-in(s).
 - **Tide**: tidal graph of the marshalling port (like the Tide Planner cycle view) with every load-in, pink
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
   barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
