@@ -142,9 +142,10 @@ def _sailing_text(params, **kwargs) -> str:
     return f"{hrs:.1f} h ({hrs / 24:.1f} days) each way"
 
 
-CHART_ALL, CHART_DETAIL = "Complete project", "Detail of one trip"
+CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
 OPT_RANGE_DAYS = 30
-UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result"}      # display choices: no new calculation
+UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result", "yard_name", "yard_lat", "yard_lon",
+           "port_name", "port_lat", "port_lon"}        # do not change the planning      # display choices: no new calculation
 
 
 def _barge_options(params, **kwargs) -> list:
@@ -237,6 +238,9 @@ class Parametrization(vkt.Parametrization):
     # ---------------- Fabricator: yard, berths, monopile schedule
     fabricator = vkt.Tab("Fabricator")
     fabricator.yard_text = vkt.Text("### Fabrication yard")
+    fabricator.yard_name = vkt.TextField("Name fabrication yard", default="Busan", flex=34)
+    fabricator.yard_lat = vkt.NumberField("Latitude", suffix="°N", default=35.10, num_decimals=4, flex=33)
+    fabricator.yard_lon = vkt.NumberField("Longitude", suffix="°E", default=129.04, num_decimals=4, flex=33)
     fabricator.yard_capacity = vkt.IntegerField("Fabrication yard storage capacity", suffix="MP", default=6, min=1,
                                                 flex=50)
     fabricator.fab_berths = vkt.IntegerField("Number of load-out berths available", default=1, min=1, flex=50)
@@ -255,7 +259,12 @@ class Parametrization(vkt.Parametrization):
     # ---------------- Marshalling port: berths, tide
     port = vkt.Tab("Marshalling port")
     port.port_text = vkt.Text("### Marshalling port")
+    port.port_name = vkt.TextField("Name marshalling port", default="Gunsan", flex=34)
+    port.port_lat = vkt.NumberField("Latitude", suffix="°N", default=35.98, num_decimals=4, flex=33)
+    port.port_lon = vkt.NumberField("Longitude", suffix="°E", default=126.62, num_decimals=4, flex=33)
     port.port_berths = vkt.IntegerField("Number of load-in berths available", default=1, min=1)
+    port.berth_note = vkt.Text("*A load-in berth is only occupied during a load-in. Barges waiting for the tide do "
+                               "not block a berth; a barge only waits for a berth when another barge is loading-in.*")
     port.tide_text = vkt.Text("### Tide at the marshalling port")
     port.tide_file = vkt.FileField("Tidal data (optional, default Gunsan 2026)", file_types=[".csv"])
     port.tide_note = vkt.Text("*File format: .csv, comma separated, header row, then one row per time (e.g. "
@@ -296,7 +305,7 @@ class Parametrization(vkt.Parametrization):
         "monopile. Only when the Double configuration is allowed for the combination (db column, not 'x').*")
 
     planning.chart_text = vkt.Text("### Planning chart")
-    planning.chart_mode = vkt.OptionField("Show", options=[CHART_ALL, CHART_DETAIL], default=CHART_ALL,
+    planning.chart_mode = vkt.OptionField("Show", options=[CHART_ALL, CHART_CYCLES, CHART_DETAIL], default=CHART_ALL,
                                           variant="radio-inline", flex=100)
     planning.detail_barge = vkt.OptionField("Barge", options=_barge_options, flex=50,
                                             visible=vkt.IsEqual(vkt.Lookup("planning.chart_mode"), CHART_DETAIL))
@@ -712,6 +721,128 @@ def build_detail(res, barge: str, trip_no: int) -> dict:
     return fig_dict
 
 
+def build_cycles(res) -> go.Figure:
+    """Barge cycles: one horizontal bar per trip (cycle = from the end of the previous trip back at the fabricator
+    until back at the fabricator again), split into its activities, all starting at 0 so that the cycle durations
+    can be compared. Total duration at the end of every bar; dashed lines: cycle without any waiting."""
+    labels, rows = [], []
+    for b in res.barges:
+        for t in [t for t in res.trips if t.barge == b.name]:
+            label = f"{t.barge} trip {t.trip_no}"
+            segs = sorted([s for s in res.segments if s["trip"] == label], key=lambda s: s["start"])
+            if not segs:
+                continue
+            t0 = segs[0]["start"]
+            labels.append(label)
+            rows.append((label, t, t0, segs))
+    fig = go.Figure()
+    for cat, color in COLORS.items():
+        xs, bases, ys, hov = [], [], [], []
+        for label, t, t0, segs in rows:
+            for s in segs:
+                if s["category"] != cat:
+                    continue
+                d = (s["finish"] - s["start"]).total_seconds() / 86400
+                bases.append((s["start"] - t0).total_seconds() / 86400)
+                xs.append(d)
+                ys.append(label)
+                hov.append(f"{_trip_text(t)}<br>{cat}: {s['detail']}<br>{s['start']:%d-%m %H:%M} - "
+                           f"{s['finish']:%d-%m %H:%M} ({d * 24:.1f} h)")
+        if xs:
+            fig.add_trace(go.Bar(x=xs, base=bases, y=ys, orientation="h", name=cat, marker_color=color,
+                                 hoverinfo="text", hovertext=hov))
+    totals = [((segs[-1]["finish"] - t0).total_seconds() / 86400, label, t) for label, t, t0, segs in rows]
+    fig.add_trace(go.Scatter(x=[d for d, _, _ in totals], y=[lab for _, lab, _ in totals], mode="text",
+                             text=[f"  {d:.1f} d ({t.mode.lower()})" for d, _, t in totals], textposition="middle right",
+                             showlegend=False, hoverinfo="skip"))
+    c = res.cycle
+    nominal = {SINGLE: c.loadout_h + c.dep_fab_h + 2 * c.sailing_h + c.entry_h + c.loadin_h + c.allowance_h + c.dep_h}
+    nominal[DOUBLE] = nominal[SINGLE] + c.loadout_h + c.loadin_h
+    for mode, dash, pos in ((SINGLE, "dash", "top left"), (DOUBLE, "dot", "top right")):
+        if any(t.mode == mode for _, _, t in totals):
+            fig.add_vline(x=nominal[mode] / 24, line=dict(color="#555", dash=dash),
+                          annotation_text=f"{mode} without waiting {nominal[mode] / 24:.1f} d",
+                          annotation_position=pos)
+    days = [d for d, _, _ in totals]
+    n = len(labels)
+    height = max(520, 22 * n + 190)
+    _layout_title(fig, ["<b>Barge cycles</b>",
+                        f"{n} trips | cycle duration average {np.mean(days):.1f} d, shortest {min(days):.1f} d, "
+                        f"longest {max(days):.1f} d<br><sup>Cycle = from back at the fabricator (end of the previous "
+                        f"trip, or the barge start) until back at the fabricator. Dashed lines: cycle without any "
+                        f"waiting.</sup>"], height)
+    fig.update_yaxes(categoryorder="array", categoryarray=labels[::-1], title_text="")
+    fig.update_xaxes(title_text="Days from the start of the cycle", range=[0, max(days) * 1.18])
+    fig.update_layout(barmode="overlay", bargap=0.25, margin=dict(t=115, l=110), hovermode="closest")
+    return fig
+
+
+def _nm(a, b) -> float:
+    """Great-circle distance (nautical miles) between (lat, lon) points."""
+    la1, lo1, la2, lo2 = map(np.radians, (a[0], a[1], b[0], b[1]))
+    c = np.sin((la2 - la1) / 2) ** 2 + np.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2) ** 2
+    return float(2 * 3440.065 * np.arcsin(np.sqrt(c)))
+
+
+# indicative sea route around the south-west of Korea (for display only)
+_ROUTE_WAYPOINTS = [(34.95, 128.95), (34.55, 128.55), (34.15, 127.70), (33.90, 126.70), (34.05, 125.75),
+                    (34.70, 125.55), (35.45, 125.95), (35.90, 126.45)]
+
+
+MAP_FILE = Path(__file__).resolve().parent / "korea_map.json"   # Natural Earth 1:10m (public domain), via world-atlas
+
+
+def build_towing(p) -> go.Figure:
+    """Map of Korea in grey (embedded coastlines, no map service needed) with the fabrication yard, the marshalling
+    port and an indicative towing route."""
+    yard = (float(p.yard_lat or 0), float(p.yard_lon or 0))
+    port = (float(p.port_lat or 0), float(p.port_lon or 0))
+    yard_name, port_name = (p.yard_name or "Fabrication yard"), (p.port_name or "Marshalling port")
+    korea = all(33 <= la <= 39 and 124 <= lo <= 131 for la, lo in (yard, port))
+    pts = [yard]
+    if korea:                                         # route around the south-west of Korea (for display only)
+        wps = list(_ROUTE_WAYPOINTS)
+        if yard[1] < port[1]:
+            wps = wps[::-1]
+        pts += wps
+    pts.append(port)
+    route_nm = sum(_nm(a, b) for a, b in zip(pts, pts[1:]))
+    fig = go.Figure()
+    shapes = json.loads(MAP_FILE.read_text())
+    for country, rings in shapes.items():
+        xs, ys = [], []
+        for r in rings:
+            xs += [x for x, _ in r] + [r[0][0], None]
+            ys += [y for _, y in r] + [r[0][1], None]
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="toself", hoverinfo="skip", showlegend=False,
+                                 fillcolor="#bdbdbd" if country == "South Korea" else "#e0e0e0",
+                                 line=dict(color="#8c8c8c", width=0.6), name=country))
+    fig.add_trace(go.Scatter(x=[x[1] for x in pts], y=[x[0] for x in pts], mode="lines",
+                             line=dict(color="#1f77b4", width=2.5, dash="dash"), hoverinfo="skip",
+                             name=f"Indicative towing route (~{route_nm:.0f} nm)"))
+    for (la, lo), name, role, color in ((yard, yard_name, "Fabrication yard", "#8c564b"),
+                                        (port, port_name, "Marshalling port", "#2ca02c")):
+        fig.add_trace(go.Scatter(
+            x=[lo], y=[la], mode="markers+text", text=[f"<b>{name}</b>"], textposition="top center",
+            textfont=dict(size=15, color=color), marker=dict(size=16, color=color, line=dict(color="white", width=2)),
+            name=f"{role}: {name}", hovertext=[f"{role}: {name}<br>{la:.4f}°N, {lo:.4f}°E"], hoverinfo="text"))
+    lats, lons = [x[0] for x in pts], [x[1] for x in pts]
+    lat0, lat1 = min(lats + [33.0]) - 0.4, max(lats + [38.7]) + 0.4
+    lon0, lon1 = min(lons + [124.6]) - 0.4, max(lons + [130.0]) + 0.4
+    ratio = 1 / np.cos(np.radians((lat0 + lat1) / 2))     # keeps the map in proportion at this latitude
+    fig.update_xaxes(range=[lon0, lon1], showgrid=False, zeroline=False, ticksuffix="°E", constrain="domain")
+    fig.update_yaxes(range=[lat0, lat1], showgrid=False, zeroline=False, ticksuffix="°N", scaleanchor="x",
+                     scaleratio=ratio, constrain="domain")
+    distance = float(p.distance_nm or 0)
+    _layout_title(fig, [f"<b>Towing {yard_name} - {port_name}</b>",
+                        f"Towing distance (input) {distance:g} nm | indicative route on the map ~{route_nm:.0f} nm | "
+                        f"straight line {_nm(yard, port):.0f} nm<br><sup>Map data: Natural Earth (public domain). The "
+                        f"route is indicative only; the planning uses the towing distance input.</sup>"], 760)
+    fig.update_layout(margin=dict(t=95, l=60, r=10, b=40), plot_bgcolor="#f4f6f8",
+                      legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"))
+    return fig
+
+
 def build_stock(res) -> go.Figure:
     """Stock curves: monopiles at the fabricator (with the storage capacity) and on the barges (top), and
     monopiles delivered at the marshalling port (bottom)."""
@@ -771,7 +902,9 @@ class TransportPlan(vkt.Controller):
         starts = [dict(name=b.name, start=f"{b.start:%d/%m/%Y}") for b in best]
         gain = (first.finish - res.finish).total_seconds() / 86400 if first is not None else 0.0
         text = (f"Last load-in {res.finish:%d/%m/%Y %H:%M}" +
-                (f" ({gain:.1f} days earlier than before)" if gain > 0.01 else " (no earlier end date found)") +
+                (f" ({gain:.1f} days earlier than before)" if gain > 0.01 else
+                 " (same end date, less waiting)" if [b.start for b in best] != [b.start for b in barges] else
+                 " (no better start dates found)") +
                 " | " + ", ".join(f"{b.name} {b.start:%d/%m/%Y}" for b in best))
         return vkt.SetParamsResult({"planning": {"starts": starts, "optimise_result": text}})
 
@@ -799,6 +932,8 @@ class TransportPlan(vkt.Controller):
     def planning_view(self, params, **kwargs):
         res = _schedule(params)
         plan = params.planning or {}
+        if plan.get("chart_mode") == CHART_CYCLES:
+            return vkt.PlotlyResult(build_cycles(res).to_json())
         if plan.get("chart_mode") == CHART_DETAIL:
             barge = plan.get("detail_barge") or res.barges[0].name
             return vkt.PlotlyResult(build_detail(res, barge, _trip_number(plan.get("detail_trip"))))
@@ -807,6 +942,10 @@ class TransportPlan(vkt.Controller):
     @vkt.PlotlyView("Tide", duration_guess=1)
     def tide_view(self, params, **kwargs):
         return vkt.PlotlyResult(build_tide(_schedule(params)))
+
+    @vkt.PlotlyView("Towing", duration_guess=1)
+    def towing_view(self, params, **kwargs):
+        return vkt.PlotlyResult(build_towing(_flat(params)).to_json())
 
     @vkt.PlotlyView("Stock", duration_guess=1)
     def stock_view(self, params, **kwargs):

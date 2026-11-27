@@ -22,8 +22,10 @@ Rules (draft):
   (heaviest class) with two monopiles on board, Single column of the barge with one. With two monopiles, the second load-in waits for the
   next tide (after the next low water), now at the Single level of the remaining monopile.
 * Berths: a barge occupies a fabricator load-out berth from the start of loading until the start of the port
-  departure, and a marshalling port berth from the start of the port entry until the start of the port
-  departure. When all berths are taken the barge waits for one.
+  departure (waiting for berth (fabricator) when all are taken). At the marshalling port a berth is ONLY occupied
+  during a load-in: a barge waiting for the tide does not block a berth. If the tide is right but all berths are
+  used by other barges loading-in, the barge waits for the next suitable tide with a free berth
+  ("Waiting for berth (other barge loading-in)").
 """
 from __future__ import annotations
 
@@ -43,7 +45,7 @@ CAT_LOAD = "Load-out"
 CAT_WAIT_MP = "Waiting for monopile"
 CAT_DEP_FAB = "Port departure (fabricator)"
 CAT_SAIL = "Sailing to marshalling port"
-CAT_BERTH_MP = "Waiting for berth (marshalling port)"
+CAT_BERTH_MP = "Waiting for berth (other barge loading-in)"
 CAT_ENTRY = "Port entry"
 CAT_TIDE = "Tidal wait"
 CAT_LOADIN = "Load-in"
@@ -129,7 +131,8 @@ class Trip:
 
     @property
     def tidal_wait_h(self) -> float:
-        return sum(x[2] for x in self.loadins)
+        """Waiting for the tide only (waiting for a berth used by another barge loading-in excluded)."""
+        return sum(x[2] for x in self.loadins) - self.berth_wait_port_h
 
 
 @dataclass
@@ -313,7 +316,7 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
     free = {b.name: b.start for b in barges}
     trip_count = {b.name: 0 for b in barges}
     fab_free = [first - timedelta(days=1)] * fab_berths       # moment each berth becomes free
-    port_free = [first - timedelta(days=1)] * port_berths
+    port_bookings = [[] for _ in range(port_berths)]           # load-in periods per marshalling port berth
     trips, segments = [], []
     h = lambda x: timedelta(hours=x)  # noqa: E731
 
@@ -395,13 +398,28 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
         seg(best.name, CAT_SAIL, sail0, arrival, label,
             f"Towing {cycle.distance_nm:g} nm at {cycle.speed_kn:g} kn ({mode.lower()})")
 
-        # marshalling port: wait for a free berth outside, then port entry
-        k_port = port_free.index(min(port_free))
-        entry = max(arrival, port_free[k_port])
-        berth_wait_port = (entry - arrival).total_seconds() / 3600
-        seg(best.name, CAT_BERTH_MP, arrival, entry, label, "All marshalling port berths taken")
+        # marshalling port: port entry (no berth needed); a berth is only occupied during a load-in
+        entry = arrival
+        berth_wait_port = 0.0
         t = entry + h(cycle.entry_h)
         seg(best.name, CAT_ENTRY, entry, t, label, "Port entry")
+
+        def book_loadin(t_from: datetime, level: float) -> tuple:
+            """Earliest load-in start from t_from with the tide right for the whole load-in AND a berth free for
+            the whole load-in (other barges' load-ins are booked). Returns (start, tide-only start)."""
+            dur = h(cycle.loadin_h)
+            tide_only = None
+            for _ in range(200):
+                start = t_from + h(gate(t_from, level, label))
+                tide_only = tide_only or start
+                free_berth = next((k for k, bk in enumerate(port_bookings)
+                                   if not any(a < start + dur and start < b for a, b in bk)), None)
+                if free_berth is not None:
+                    port_bookings[free_berth].append((start, start + dur))
+                    return start, tide_only
+                # all berths taken: continue after the first booking that ends (next suitable tide from there)
+                t_from = min(b for bk in port_bookings for a, b in bk if a < start + dur and start < b)
+            raise PlanningError(f"{label}: no free marshalling port berth found.")
 
         # load-ins on a rising tide: first at the configuration level, the second on the next tide
         loadins = []
@@ -413,10 +431,13 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
                 level = best.single_cm[m.cargo_class]
                 what = "single"
             search = t if n == 0 else _next_low_water(tide, loadins[-1][3])
-            wait_h = gate(search, level, label)
-            start = search + h(wait_h)
+            start, tide_only = book_loadin(search, level)
             wait_total = (start - t).total_seconds() / 3600
-            seg(best.name, CAT_TIDE, t, start, label, f"Waiting for a rising tide >= {level:.0f} cm ({what})")
+            berth_wait_port += (start - tide_only).total_seconds() / 3600
+            seg(best.name, CAT_TIDE, t, tide_only, label, f"Waiting for a rising tide >= {level:.0f} cm ({what})")
+            seg(best.name, CAT_BERTH_MP, tide_only, start, label,
+                "Tide was right, but all berths are used by another barge loading-in - waiting for the next "
+                "suitable tide with a free berth")
             end = start + h(cycle.loadin_h)
             seg(best.name, CAT_LOADIN, start, end, label, f"Load-in {m.name} (rising tide >= {level:.0f} cm, {what})")
             m.loadin_start, m.loadin_cm, m.loadin_wait_h = start, level, wait_total
@@ -424,7 +445,6 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
             t = end
         allow_end = t + h(cycle.allowance_h)
         seg(best.name, CAT_ALLOW, t, allow_end, label, "General load-in time allowance")
-        port_free[k_port] = allow_end                             # berth free at the start of the port departure
         dep_end = allow_end + h(cycle.dep_h)
         seg(best.name, CAT_DEP, allow_end, dep_end, label, "Port departure marshalling port")
         w_back = weather_h(dep_end)

@@ -14,9 +14,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   configuration (level for the heaviest monopile on board; `x` = not possible). The line *Columns* shows which
   barge each column is. Only columns of defined barges are shown (VIKTOR cannot hide table columns, so there is
   one table per fleet composition and only the matching one is visible).
-- **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
+- **Fabricator**: name and position of the fabrication yard (default Busan, 35.10°N 129.04°E), storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
-- **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
+- **Marshalling port**: name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
   Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
   the calculation and the charts.
 - **Weather**: workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
@@ -33,9 +33,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
    monopile k - capacity has been loaded out = production delay).
 3. A Double barge takes the next monopile too when the Double column permits it and it is ready within the
    max. wait.
-4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure, a
-   marshalling port berth from the port entry until the port departure (so also while waiting for the tide).
-   When all berths are taken the barge waits.
+4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure (barges wait
+   when all are taken). A marshalling port berth is only occupied during a load-in: a barge waiting for the tide
+   does not block it. If the tide is right but all berths are used by other barges loading-in, the barge waits
+   for the next suitable tide with a free berth (*Waiting for berth (other barge loading-in)*).
 5. Load-in starts on a rising tide and the tide stays at or above the level of the load configuration for the
    whole load-in (Double level with two monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
    the remaining monopile.
@@ -44,7 +45,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
    the Gantt chart).
 
 ## Results
-- **Planning**: Gantt per barge with all activities and waits, or (tab Planning, *Planning chart* = Detail of one
+- **Planning**: Gantt per barge with all activities and waits, or *Barge cycles*: one bar per trip split into its
+  activities, all starting at 0, with the total cycle duration (and dashed lines for a cycle without waiting), or (tab Planning, *Planning chart* = Detail of one
   trip) one barge trip: tidal curve with the required level per barge configuration, green where the tide stays
   at or above that level for at least the load-in duration (load-in possible), grey where it is too short, the
   load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the
@@ -53,6 +55,10 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
   barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
   move to a date, drag in the graph to zoom (also the y-axis), double-click to reset.
+- **Towing**: grey map of Korea with the fabrication yard, the marshalling port and an indicative towing route
+  (display only; the planning uses the towing distance input). Map data: Natural Earth 1:10m (public domain),
+  taken from the world-atlas package (ISC licence), embedded in `app/transport/korea_map.json` - no map service
+  needed.
 - **Stock**: monopiles at the fabricator (with storage capacity and production delays), on the barges and
   delivered at the marshalling port over time.
 - **Table**: per monopile: class, ready / produced, barge / trip, single / double, load-out, arrival, load-in,
