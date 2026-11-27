@@ -1,37 +1,4 @@
-The app needs to provide insight in the planning due to the tidal restrictions in te marshalling port
-
-barge fleet definition remains as is
-
-barge cycle should be a generic cycle for all barges, with following user input
-
-Towing distance , default 350Nm
-Average towing speed, default 4 knots
-
-sailing to marshalling port, calculated
-Load-out at fabricator per MP, default 24hrs
-Port depature fabricator, default 3 hours
-Port entry, default 3hrs
-
-load in duration per MP, default 3hrs 
-consider (add as note in small print): load-in is starting on a rising tide from a particular tide level
-This tide level is depending on load configuration, if tide level is not reached the barge will have to wait
-if a barge has two monopiles loaded and the first one is transferred, it will need to wait until the next tide for the next load-in
-
-general load-in time allowance, default 21 hrs
-
-Port depature, default 6 hours
-sailing back to fabricator, calculated
-
-Next to input create a new tab with "cargo-cycle" here should be provided :
-
-insert table cargo_weight classes here
-as a default code / from / to
-A 1000 1200
-B 1200 1400
-C 1400 1600
-D 1600 1800
-
-insert table for the defined single barges their MP restrictions here:
+tide levels for load-in table
 columns give barge names, rows are catagories, values are tide levels
 the values are representative for the heaviest monopile which is allowed to be loaded
 a "x" means this configuration is not possible
@@ -45,75 +12,12 @@ B 540 540 600 600
 C 560 560 x x
 D 580 580 x x
 
-Next to input create a new tab with "fabricator" here should be provided :
+rename barges to b1 b2 b3 in the column headers
 
-Fabrication yard storage capacity: default 6
-Number of load-out berths available: default 1
+create a tidal graph output similar to the tidal_planner repository
 
-Create a option to select when the monopile should be produced and reay for load-out either earliest or latest date
-
-Proivde the MP schedule table as a default provide this:
-
-number	location	weight	earliest	latest
-1	OSS	1,520 	06/03/2028	21/03/2028
-2	WTG-31	1,725 	07/03/2028	22/03/2028
-3	WTG-34	1,596 	08/03/2028	23/03/2028
-4	WTG-33	1,611 	16/03/2028	31/03/2028
-5	WTG-07	1,588 	17/03/2028	01/04/2028
-6	WTG-06	1,527 	26/03/2028	10/04/2028
-7	WTG-05	1,428 	27/03/2028	11/04/2028
-8	WTG-13	1,506 	04/04/2028	19/04/2028
-9	WTG-25	1,527 	05/04/2028	20/04/2028
-10	WTG-32	1,580 	13/04/2028	28/04/2028
-11	WTG-30	1,146 	14/04/2028	29/04/2028
-12	WTG-36	1,251 	22/04/2028	07/05/2028
-13	WTG-24	1,248 	23/04/2028	08/05/2028
-14	WTG-16	1,357 	01/05/2028	16/05/2028
-15	WTG-23	1,283 	02/05/2028	17/05/2028
-16	WTG-03	1,258 	10/05/2028	25/05/2028
-17	WTG-02	1,206 	11/05/2028	26/05/2028
-18	WTG-22	1,292 	19/05/2028	03/06/2028
-19	WTG-10	1,207 	20/05/2028	04/06/2028
-20	WTG-01	1,368 	02/06/2028	17/06/2028
-21	WTG-35	1,402 	03/06/2028	18/06/2028
-22	WTG-08	1,438 	11/06/2028	26/06/2028
-23	WTG-15	1,310 	12/06/2028	27/06/2028
-24	WTG-14	1,604 	20/06/2028	05/07/2028
-25	WTG-12	1,387 	21/06/2028	06/07/2028
-26	WTG-04	1,375 	04/07/2028	19/07/2028
-27	WTG-11	1,343 	05/07/2028	20/07/2028
-28	WTG-21	1,374 	13/07/2028	28/07/2028
-29	WTG-20	1,412 	14/07/2028	29/07/2028
-30	WTG-19	1,446 	01/08/2028	16/08/2028
-31	WTG-09	1,250 	02/08/2028	17/08/2028
-32	WTG-27	1,358 	10/08/2028	25/08/2028
-33	WTG-26	1,440 	11/08/2028	26/08/2028
-34	WTG-17	1,478 	19/08/2028	03/09/2028
-35	WTG-18	1,402 	20/08/2028	04/09/2028
-36	WTG-29	1,325 	27/08/2028	11/09/2028
-37	WTG-28	1,392 	31/08/2028	15/09/2028
-
-
-Next to fabricator create tab "marshalling port"
-Number of load-out berths available: default 1
-provide upload for the tidal data (default Gunsan 2026)
-
-insert tab "planning"
-
-generate a table with the barges and their start date as a default:
-
-barge start
-barge_1 15/03/2028
-barge_2 15/03/2028
-barge_3 15/05/2028
-
-assume the barges start from the fabricator yard (describe as not in small print)
-if their is only one load-out berth available barges need to wait until the berth becomes available
-
-
-
-
-
-
-
-
+Also make a slider to zooms to a certain date and a period
+also enable zooming the y-axis so that the tidal graph is showing
+the bottom of the tidal graph gant bars needs to show the activities of the barges
+vertical red/pink areas need to show where there is tidal delay
+hoover info should be available about barge configuration
