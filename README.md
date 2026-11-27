@@ -9,14 +9,14 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   MP 24 h, port departure fabricator 3 h, port entry 3 h, **load-in duration per MP 3 h (sets the tidal window)**, general load-in time allowance
   21 h, port departure 6 h. After changing barges or cargo classes press **Update tide matrix and barge start
   tables**.
-- **Cycle** (cargo cycle): cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns
+- **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns
   sb1, sb2, ... = all barges in the Single configuration, then db1, db2, ... = the Double barges in the Double
   configuration (level for the heaviest monopile on board; `x` = not possible). The line *Columns* shows which
   barge each column is. Only columns of defined barges are shown (VIKTOR cannot hide table columns, so there is
   one table per fleet composition and only the matching one is visible).
-- **Fab-P** (fabricator): name and position of the fabrication yard (default Busan, 35.10°N 129.04°E), storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
+- **Fabricator**: name and position of the fabrication yard (default Busan, 35.10°N 129.04°E), storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
-- **Mar-P** (marshalling port): name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
+- **Marshalling port**: name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
   Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
   the calculation and the charts.
 - **Weather**: workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
@@ -26,6 +26,13 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   searches every barge's start date within +/- 30 days of the entered dates for the earliest last load-in (one
   barge at a time, 3-day steps then day by day, repeated until nothing improves; ties: least waiting) and fills
   in the best dates (result in *Last optimisation*); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
+
+- **Export** (last tab): downloads of the current planning:
+  - *Complete planning (Excel)*: Summary (results and inputs), Barge cycles, Monopiles, Activities, Load-ins (tide
+    at start / lowest / highest during each load-in), Stock, Tide (hourly);
+  - *Barge cycles (Excel)*: one row per trip with the hours per activity, plus averages per barge;
+  - *All activities (CSV)*: every activity of every barge (semicolon separated);
+  - *Charts (interactive HTML)*: planning, barge cycles, tide, stock and towing map in one browser file.
 
 ## Rules (draft)
 1. Monopiles are shipped in number order; each goes on the barge that can start its load-out first.
