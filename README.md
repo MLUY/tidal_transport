@@ -14,7 +14,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   configuration (level for the heaviest monopile on board; `x` = not possible). The line *Columns* shows which
   barge each column is. Only columns of defined barges are shown (VIKTOR cannot hide table columns, so there is
   one table per fleet composition and only the matching one is visible).
-- **Fabricator**: name and position of the fabrication yard (default Busan, 35.10°N 129.04°E), storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
+- **Fabricator**: **requirement: production may never be delayed** - the storage may never be full when a
+  monopile is ready (checked in the results: *storage requirement met / NOT MET*); name and position of the fabrication yard (default Busan, 35.10°N 129.04°E), storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
 - **Marshalling port**: name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
   Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
@@ -23,8 +24,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   Jun-Aug 90, Sep 85, Oct 75, Nov 65, Dec 50). Weather downtime per leg = sailing time x (100 / workability - 1),
   month of the start of the leg; shown as *Weather downtime* before the sailing.
 - **Planning**: start date per barge (barges start at the fabricator yard); button **Optimise start dates**:
-  searches every barge's start date within +/- 30 days of the entered dates for the earliest last load-in (one
-  barge at a time, 3-day steps then day by day, repeated until nothing improves; ties: least waiting) and fills
+  searches every barge's start date within +/- 60 days of the entered dates, first for no production delay
+  (storage requirement), then for the earliest last load-in, then for the least waiting (one barge at a time,
+  4-day steps then day by day, repeated until nothing improves) and fills
   in the best dates (result in *Last optimisation*); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
 
 - **Export** (last tab): downloads of the current planning:
