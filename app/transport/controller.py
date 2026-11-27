@@ -15,6 +15,7 @@ from .schedule import (CAT_ALLOW, CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_BERTH_MP, CAT
                        CAT_LOADIN, CAT_RETURN, CAT_SAIL, CAT_TIDE, CAT_WAIT_MP, DOUBLE, READY_EARLIEST, READY_LATEST,
                        SINGLE, CAT_WEATHER, DEFAULT_WORKABILITY, MONTHS, Barge, CargoClass, Cycle, Monopile,
                        plan_transport)
+from .export import build_activities_csv, build_cycles_excel, build_html_report, build_planning_excel
 from .tide import PlanningError, load_tide
 
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
@@ -22,7 +23,7 @@ MAX_BARGES = 6
 S_COLS = tuple(f"s{k}" for k in range(1, MAX_BARGES + 1))      # tide table: sb1 ... = 1st ... barge (Single)
 D_COLS = tuple(f"d{k}" for k in range(1, MAX_BARGES + 1))      # db1 ... = 1st ... Double barge (Double)
 NOT_ALLOWED = "x"
-TABS = ("input", "cargo", "fabricator", "port", "weather", "planning")
+TABS = ("input", "cargo", "fabricator", "port", "weather", "planning", "export")
 
 COLORS = {CAT_WAIT_FAB: "#dbdb8d", CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_DEP_FAB: "#9467bd",
           CAT_WEATHER: "#17becf", CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
@@ -206,13 +207,13 @@ class Parametrization(vkt.Parametrization):
         "- A load-in may only **start on a rising tide**.  \n"
         "- The tide must be **at or above the required level from the start until the end of the load-in** "
         "(load-in duration per MP). It may pass high water during the load-in, but not drop below the level.  \n"
-        "- The required level depends on the load configuration (tab Cycle). If the tide does not stay high "
+        "- The required level depends on the load configuration (tab Cargo-cycle). If the tide does not stay high "
         "enough for the whole load-in, the barge waits for the next suitable tide.  \n"
         "- With two monopiles on board, the first load-in uses the Double level; after it, the barge waits for the "
         "next tide for the second load-in, at the Single level of the remaining monopile.*")
 
     # ---------------- Cargo-cycle: weight classes and tide matrix
-    cargo = vkt.Tab("Cycle")
+    cargo = vkt.Tab("Cargo-cycle")
     cargo.class_text = vkt.Text("### Cargo weight classes\n*From weight <= weight < to weight.*")
     cargo.classes = vkt.Table("Cargo weight classes", default=DEFAULT_CLASSES)
     cargo.classes.name = vkt.TextField("Code")
@@ -236,7 +237,7 @@ class Parametrization(vkt.Parametrization):
             setattr(cargo, _table_name(_n, _d), _table)
 
     # ---------------- Fabricator: yard, berths, monopile schedule
-    fabricator = vkt.Tab("Fab-P")
+    fabricator = vkt.Tab("Fabricator")
     fabricator.yard_text = vkt.Text("### Fabrication yard")
     fabricator.yard_name = vkt.TextField("Name fabrication yard", default="Busan", flex=34)
     fabricator.yard_lat = vkt.NumberField("Latitude", suffix="°N", default=35.10, num_decimals=4, flex=33)
@@ -257,7 +258,7 @@ class Parametrization(vkt.Parametrization):
     fabricator.monopiles.latest = vkt.TextField("Latest (dd/mm/yyyy)")
 
     # ---------------- Marshalling port: berths, tide
-    port = vkt.Tab("Mar-P")
+    port = vkt.Tab("Marshalling port")
     port.port_text = vkt.Text("### Marshalling port")
     port.port_name = vkt.TextField("Name marshalling port", default="Gunsan", flex=34)
     port.port_lat = vkt.NumberField("Latitude", suffix="°N", default=35.98, num_decimals=4, flex=33)
@@ -311,6 +312,26 @@ class Parametrization(vkt.Parametrization):
                                             visible=vkt.IsEqual(vkt.Lookup("planning.chart_mode"), CHART_DETAIL))
     planning.detail_trip = vkt.OptionField("Trip", options=_trip_options, flex=50,
                                            visible=vkt.IsEqual(vkt.Lookup("planning.chart_mode"), CHART_DETAIL))
+
+    # ---------------- Export: downloads of the planning
+    export = vkt.Tab("Export")
+    export.text = vkt.Text("### Export\n*Download the current planning (all inputs as they are now).*")
+    export.planning_xlsx = vkt.DownloadButton("Complete planning (Excel)", method="download_planning", longpoll=True,
+                                              flex=100)
+    export.planning_note = vkt.Text("*Sheets: Summary (results and inputs), Barge cycles, Monopiles, Activities, "
+                                    "Load-ins (tide check per load-in), Stock, Tide (hourly).*")
+    export.cycles_xlsx = vkt.DownloadButton("Barge cycles (Excel)", method="download_cycles", longpoll=True, flex=100)
+    export.cycles_note = vkt.Text("*One row per trip: start, end, cycle duration and the hours per activity; "
+                                  "plus averages per barge.*")
+    export.activities_csv = vkt.DownloadButton("All activities (CSV)", method="download_activities", longpoll=True,
+                                               flex=100)
+    export.activities_note = vkt.Text("*Every activity of every barge (start, end, hours, detail); semicolon "
+                                      "separated, opens in Excel or any other tool.*")
+    export.report_html = vkt.DownloadButton("Charts (interactive HTML)", method="download_report", longpoll=True,
+                                            flex=100)
+    export.report_note = vkt.Text("*Planning, barge cycles, tide, stock and towing map in one file that opens in "
+                                  "any web browser (zoom and hover info work; needs internet for the chart "
+                                  "library).*")
 
 
 # ---------------------------------------------------------------- inputs -> engine
@@ -478,11 +499,29 @@ def optimise_start_dates(barges, kwargs, range_days: int = OPT_RANGE_DAYS):
     return current, best_res, first_res
 
 
+def _export_inputs(p) -> list:
+    """(label, value) of the main inputs for the Summary sheet."""
+    fleet = ", ".join(f"{n} ({c})" for n, c in _fleet(p))
+    starts = ", ".join(f"{r.name} {r.start}" for r in (p.starts or []))
+    wk = ", ".join(f"{r.month} {r.pct:g}%" for r in (p.workability or []) if r.pct is not None)
+    return [("Barge fleet", fleet), ("Barge start dates", starts),
+            ("Towing distance (nm)", p.distance_nm), ("Average towing speed (kn)", p.speed_kn),
+            ("Load-out per MP (h)", p.loadout_h), ("Port departure fabricator (h)", p.dep_fab_h),
+            ("Port entry (h)", p.entry_h), ("Load-in duration per MP (h) - tidal window", p.loadin_h),
+            ("General load-in time allowance (h)", p.allowance_h), ("Port departure (h)", p.dep_h),
+            ("Fabrication yard", f"{p.yard_name} ({p.yard_lat}, {p.yard_lon})"),
+            ("Storage capacity (MP)", p.yard_capacity), ("Load-out berths", p.fab_berths),
+            ("Monopiles ready on", p.ready),
+            ("Marshalling port", f"{p.port_name} ({p.port_lat}, {p.port_lon})"), ("Load-in berths", p.port_berths),
+            ("Tidal data", p.tide_file.filename if p.tide_file else "default Gunsan 2026 (repeated yearly)"),
+            ("Weather workability", wk), ("Double barge max wait (h)", p.max_wait_second)]
+
+
 # ---------------------------------------------------------------- figures
 def _summary(res) -> str:
     n_double = sum(t.mode == DOUBLE for t in res.trips)
     txt = (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
-           f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y} | tidal wait {res.total_tidal_wait_h:.0f} h"
+           f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y}<br>tidal wait {res.total_tidal_wait_h:.0f} h"
            f" | berth wait {res.total_berth_wait_h:.0f} h | weather {res.total_weather_h:.0f} h")
     if res.production_delay_count:
         txt += f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>"
@@ -504,7 +543,7 @@ def build_gantt(res) -> go.Figure:
     fig.update_yaxes(categoryorder="array", categoryarray=[b.name for b in res.barges][::-1], title_text="")
     fig.update_xaxes(rangeslider_visible=True)
     _layout_title(fig, ["<b>Transport schedule</b>", _summary(res)], 600)
-    fig.update_layout(margin=dict(l=100, t=80))
+    fig.update_layout(margin=dict(l=100, t=100))
     return fig
 
 
@@ -604,7 +643,7 @@ def build_table(res) -> go.Figure:
                              cells=dict(values=cols, align="left", fill_color=[color] * len(header))))
     per_barge = " | ".join(f"{b.name}: {sum(t.barge == b.name for t in res.trips)} trips" for b in res.barges)
     _layout_title(fig, ["<b>Monopile schedule</b>", f"{_summary(res)}<br>{per_barge}"], 800)
-    fig.update_layout(margin=dict(t=95, l=10, r=10))
+    fig.update_layout(margin=dict(t=115, l=10, r=10))
     return fig
 
 
@@ -907,6 +946,32 @@ def build_stock(res) -> go.Figure:
 class TransportPlan(vkt.Controller):
     label = "Transport plan"
     parametrization = Parametrization
+
+    # ---------------- exports
+    def _file_name(self, params, ext: str) -> str:
+        res = _schedule(params)
+        return f"tidal_transport_{res.start:%Y%m%d}_{len(res.monopiles)}MP_{len(res.trips)}trips.{ext}"
+
+    def download_planning(self, params, **kwargs):
+        res = _schedule(params)
+        return vkt.DownloadResult(build_planning_excel(res, _export_inputs(_flat(params))),
+                                  self._file_name(params, "xlsx").replace("tidal_transport", "planning"))
+
+    def download_cycles(self, params, **kwargs):
+        return vkt.DownloadResult(build_cycles_excel(_schedule(params)),
+                                  self._file_name(params, "xlsx").replace("tidal_transport", "barge_cycles"))
+
+    def download_activities(self, params, **kwargs):
+        return vkt.DownloadResult(build_activities_csv(_schedule(params)),
+                                  self._file_name(params, "csv").replace("tidal_transport", "activities"))
+
+    def download_report(self, params, **kwargs):
+        res = _schedule(params)
+        p = _flat(params)
+        figures = [build_gantt(res), build_cycles(res), go.Figure(build_tide(res)), build_stock(res), build_towing(p)]
+        title = f"Tidal transport planning {p.yard_name or ''} - {p.port_name or ''}".strip()
+        return vkt.DownloadResult(build_html_report(title, figures),
+                                  self._file_name(params, "html").replace("tidal_transport", "charts"))
 
     def optimise_starts(self, params, **kwargs):
         """Fills in the start date per barge that gives the earliest last load-in."""
