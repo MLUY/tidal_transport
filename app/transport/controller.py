@@ -193,10 +193,14 @@ class Parametrization(vkt.Parametrization):
     input.allowance_h = vkt.NumberField("General load-in time allowance", suffix="h", default=21, min=0, flex=50)
     input.dep_h = vkt.NumberField("Port departure", suffix="h", default=6, min=0, flex=50)
     input.loadin_note = vkt.Text(
-        "*Load-in starts on a rising tide from a particular tide level, and the tide must stay at or above that level "
-        "until the load-in is finished. This tide level depends on the load configuration (tab Cargo-cycle); if "
-        "the tide level is not reached for the whole load-in the barge has to wait. If a barge has two "
-        "monopiles loaded and the first one is transferred, it waits until the next tide for the next load-in.*")
+        "*Load-in rules (tide at the marshalling port):  \n"
+        "- A load-in may only **start on a rising tide**.  \n"
+        "- The tide must be **at or above the required level from the start until the end of the load-in** "
+        "(load-in duration per MP). It may pass high water during the load-in, but not drop below the level.  \n"
+        "- The required level depends on the load configuration (tab Cargo-cycle). If the tide does not stay high "
+        "enough for the whole load-in, the barge waits for the next suitable tide.  \n"
+        "- With two monopiles on board, the first load-in uses the Double level; after it, the barge waits for the "
+        "next tide for the second load-in, at the Single level of the remaining monopile.*")
 
     # ---------------- Cargo-cycle: weight classes and tide matrix
     cargo = vkt.Tab("Cargo-cycle")
@@ -208,7 +212,7 @@ class Parametrization(vkt.Parametrization):
     cargo.matrix_text = vkt.Text(
         "### Tide levels for load-in (cm)\n*Rows: cargo classes. Columns: first all barges in the **Single** "
         "configuration (sb1, sb2, ...: one monopile on board), then the Double barges in the **Double** configuration "
-        "(db1, db2, ...: two monopiles). The value is the tide level needed for the heaviest monopile on board; "
+        "(db1, db2, ...: two monopiles). The value is the minimum tide level during the whole load-in for the heaviest monopile on board; "
         "'x' = configuration not possible.*")
     cargo.columns = vkt.OutputField("Columns", value=_matrix_columns, flex=100)
     for _n in range(1, MAX_BARGES + 1):

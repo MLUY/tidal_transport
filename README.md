@@ -17,6 +17,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
 - **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
+  Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
+  the calculation and the charts.
 - **Planning**: start date per barge (barges start at the fabricator yard); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
 
 ## Rules (draft)
