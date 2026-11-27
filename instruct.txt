@@ -1,12 +1,4 @@
-on barge fleet remove "up to 6 barges"
-
-under planning 
-selection between complete gantt of the project as is now or a detail
-
-if detail is selected then select a barge and a trip
-the chart zhould now update zooming over the load-in and displying the full tidal curve with levels
-also display on the bottom the hours and show the load-in is exactly within the hours required
-
-used "double barge max wait" as title and put a small note underneath explaining what this means
-(max wait for fabricator )
-
+not all the tabs on the left are showing, rename 
+cargo-cycle to cycle
+Fabricator to Fab-P
+Marshalling port to Mar-P
