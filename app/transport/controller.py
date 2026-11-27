@@ -726,13 +726,17 @@ def build_cycles(res) -> go.Figure:
     until back at the fabricator again), split into its activities, all starting at 0 so that the cycle durations
     can be compared. Total duration at the end of every bar; dashed lines: cycle without any waiting."""
     labels, rows = [], []
+    # labels padded to equal length (shown in a fixed-width font), so that barge names and trip numbers line up
+    w_name = max(len(b.name) for b in res.barges)
+    w_trip = len(str(max(t.trip_no for t in res.trips)))
     for b in res.barges:
         for t in [t for t in res.trips if t.barge == b.name]:
-            label = f"{t.barge} trip {t.trip_no}"
-            segs = sorted([s for s in res.segments if s["trip"] == label], key=lambda s: s["start"])
+            key = f"{t.barge} trip {t.trip_no}"
+            segs = sorted([s for s in res.segments if s["trip"] == key], key=lambda s: s["start"])
             if not segs:
                 continue
             t0 = segs[0]["start"]
+            label = f"{t.barge:<{w_name}}  trip {t.trip_no:>{w_trip}}".replace(" ", "\u00a0")
             labels.append(label)
             rows.append((label, t, t0, segs))
     fig = go.Figure()
@@ -765,15 +769,18 @@ def build_cycles(res) -> go.Figure:
                           annotation_position=pos)
     days = [d for d, _, _ in totals]
     n = len(labels)
-    height = max(520, 22 * n + 190)
+    height = max(520, 24 * n + 190)
     _layout_title(fig, ["<b>Barge cycles</b>",
                         f"{n} trips | cycle duration average {np.mean(days):.1f} d, shortest {min(days):.1f} d, "
                         f"longest {max(days):.1f} d<br><sup>Cycle = from back at the fabricator (end of the previous "
                         f"trip, or the barge start) until back at the fabricator. Dashed lines: cycle without any "
                         f"waiting.</sup>"], height)
-    fig.update_yaxes(categoryorder="array", categoryarray=labels[::-1], title_text="")
+    fig.update_yaxes(categoryorder="array", categoryarray=labels[::-1], title_text="",
+                     tickfont=dict(family="Consolas, 'Courier New', monospace", size=14, color="#222"),
+                     ticklabelstandoff=8)
     fig.update_xaxes(title_text="Days from the start of the cycle", range=[0, max(days) * 1.18])
-    fig.update_layout(barmode="overlay", bargap=0.25, margin=dict(t=115, l=110), hovermode="closest")
+    fig.update_layout(barmode="overlay", bargap=0.25, margin=dict(t=115, l=40 + 9 * (w_name + w_trip + 8)),
+                      hovermode="closest")
     return fig
 
 
