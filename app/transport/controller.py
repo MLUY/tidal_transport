@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 from datetime import date, datetime, timedelta
@@ -142,7 +143,8 @@ def _sailing_text(params, **kwargs) -> str:
 
 
 CHART_ALL, CHART_DETAIL = "Complete project", "Detail of one trip"
-UI_ONLY = {"chart_mode", "detail_barge", "detail_trip"}      # display choices: no new calculation
+OPT_RANGE_DAYS = 30
+UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result"}      # display choices: no new calculation
 
 
 def _barge_options(params, **kwargs) -> list:
@@ -282,6 +284,11 @@ class Parametrization(vkt.Parametrization):
     planning.starts = vkt.Table("Barge start", default=DEFAULT_STARTS)
     planning.starts.name = vkt.TextField("Barge")
     planning.starts.start = vkt.TextField("Start (dd/mm/yyyy)")
+    planning.optimise = vkt.SetParamsButton(
+        "Optimise start dates", method="optimise_starts", longpoll=True, flex=100,
+        description=f"Searches the start date of every barge within +/- {OPT_RANGE_DAYS} days of the dates above for "
+                    f"the earliest last load-in, and fills in the best dates.")
+    planning.optimise_result = vkt.TextField("Last optimisation", flex=100)
     planning.max_wait_second = vkt.NumberField("Double barge max wait", suffix="h", default=24, min=0)
     planning.max_wait_note = vkt.Text(
         "*Max. wait at the fabricator for the 2nd monopile: after loading the first monopile, a Double barge waits "
@@ -403,17 +410,63 @@ def _schedule(params):
     if key not in _CACHE:
         if len(_CACHE) > 20:
             _CACHE.clear()
-        barges, classes, monopiles, cycle = _inputs(p)
+        barges, kwargs = _plan_inputs(p, data)
         try:
-            _CACHE[key] = plan_transport(
-                barges=barges, classes=classes, monopiles=monopiles, tide=load_tide(data), cycle=cycle,
-                yard_capacity=int(p.yard_capacity) if p.yard_capacity else None,
-                fab_berths=int(p.fab_berths or 1), port_berths=int(p.port_berths or 1),
-                ready=p.ready or READY_EARLIEST, max_wait_second_h=float(p.max_wait_second or 0),
-                workability=_workability(p))
+            _CACHE[key] = plan_transport(barges=barges, **kwargs)
         except PlanningError as exc:
             raise vkt.UserError(str(exc))
     return _CACHE[key]
+
+
+def _plan_inputs(p, data: bytes):
+    """(barges, other keyword arguments of plan_transport) from flat params."""
+    barges, classes, monopiles, cycle = _inputs(p)
+    try:
+        tide = load_tide(data)
+    except PlanningError as exc:
+        raise vkt.UserError(str(exc))
+    return barges, dict(classes=classes, monopiles=monopiles, tide=tide, cycle=cycle,
+                        yard_capacity=int(p.yard_capacity) if p.yard_capacity else None,
+                        fab_berths=int(p.fab_berths or 1), port_berths=int(p.port_berths or 1),
+                        ready=p.ready or READY_EARLIEST, max_wait_second_h=float(p.max_wait_second or 0),
+                        workability=_workability(p))
+
+
+def optimise_start_dates(barges, kwargs, range_days: int = OPT_RANGE_DAYS):
+    """Start date per barge (within +/- range_days of the given dates) with the earliest last load-in.
+    Search one barge at a time (coarse 3-day steps, then day by day around the best), repeated until nothing
+    improves. Ties: less total waiting. Returns (best barges, best result, original result)."""
+    def run(bs):
+        try:
+            res = plan_transport(barges=bs, **kwargs)
+        except PlanningError:
+            return None, (datetime.max, float("inf"))
+        wait = res.total_tidal_wait_h + res.total_berth_wait_h
+        return res, (res.finish, wait)
+
+    base = {b.name: b.start for b in barges}
+    current = list(barges)
+    first_res, best_score = run(current)
+    best_res = first_res
+    for _ in range(4):                                    # passes over all barges
+        improved = False
+        for k, b in enumerate(barges):
+            for offsets in (range(-range_days, range_days + 1, 3), None):
+                if offsets is None:                       # refine around the best so far, day by day
+                    d0 = (current[k].start - base[b.name]).days
+                    offsets = [d for d in range(d0 - 2, d0 + 3) if abs(d) <= range_days]
+                for d in offsets:
+                    start = base[b.name] + timedelta(days=d)
+                    if start == current[k].start:
+                        continue
+                    trial = list(current)
+                    trial[k] = dataclasses.replace(current[k], start=start)
+                    res, score = run(trial)
+                    if score < best_score:
+                        current, best_res, best_score, improved = trial, res, score, True
+        if not improved:
+            break
+    return current, best_res, first_res
 
 
 # ---------------------------------------------------------------- figures
@@ -707,6 +760,20 @@ def build_stock(res) -> go.Figure:
 class TransportPlan(vkt.Controller):
     label = "Transport plan"
     parametrization = Parametrization
+
+    def optimise_starts(self, params, **kwargs):
+        """Fills in the start date per barge that gives the earliest last load-in."""
+        p = _flat(params)
+        barges, plan_kwargs = _plan_inputs(p, _tide_bytes(p))
+        best, res, first = optimise_start_dates(barges, plan_kwargs)
+        if res is None:
+            raise vkt.UserError("No feasible planning found - check the inputs.")
+        starts = [dict(name=b.name, start=f"{b.start:%d/%m/%Y}") for b in best]
+        gain = (first.finish - res.finish).total_seconds() / 86400 if first is not None else 0.0
+        text = (f"Last load-in {res.finish:%d/%m/%Y %H:%M}" +
+                (f" ({gain:.1f} days earlier than before)" if gain > 0.01 else " (no earlier end date found)") +
+                " | " + ", ".join(f"{b.name} {b.start:%d/%m/%Y}" for b in best))
+        return vkt.SetParamsResult({"planning": {"starts": starts, "optimise_result": text}})
 
     def update_tables(self, params, **kwargs):
         """Tide level table (rows = cargo classes) and barge start table in line with the fleet / classes;
