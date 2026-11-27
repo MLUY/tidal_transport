@@ -41,6 +41,8 @@ class TideCurve:
         self.hours = ((df["time"] - df["time"].iloc[0]) / pd.Timedelta(hours=1)).to_numpy(float)
         self.cm = df["cm"].to_numpy(float)
         self._slope = np.diff(self.cm) / np.diff(self.hours)
+        # tangent at every data point (central differences) for a smooth curve through the data points
+        self._tangent = np.gradient(self.cm, self.hours) if len(self.cm) > 1 else np.zeros_like(self.cm)
 
     @property
     def end(self) -> datetime:
@@ -98,13 +100,31 @@ class TideCurve:
         t0 = self.t0.hour + self.t0.minute / 60 + self.t0.second / 3600
         return np.round(t0 + np.asarray(hours, float), 6) % 24
 
+    def _segment(self, hours):
+        h = np.asarray(hours, float)
+        idx = np.clip(np.searchsorted(self.hours, h, side="right") - 1, 0, len(self.hours) - 2)
+        dt = self.hours[idx + 1] - self.hours[idx]
+        s = np.clip((h - self.hours[idx]) / dt, 0.0, 1.0)
+        return idx, dt, s
+
     def level_cm(self, hours):
-        return np.interp(hours, self.hours, self.cm)
+        """Tide level (cm): smooth curve through the data points (cubic Hermite / Catmull-Rom), so that high
+        and low water are rounded like the real tide instead of sharp corners between hourly values."""
+        idx, dt, s = self._segment(hours)
+        p0, p1 = self.cm[idx], self.cm[idx + 1]
+        m0, m1 = self._tangent[idx] * dt, self._tangent[idx + 1] * dt
+        s2, s3 = s * s, s * s * s
+        return ((2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * m0 + (-2 * s3 + 3 * s2) * p1
+                + (s3 - s2) * m1)
 
     def rising(self, hours):
-        """True where the tide is rising (slope of the data segment at that time)."""
-        idx = np.clip(np.searchsorted(self.hours, hours, side="right") - 1, 0, len(self._slope) - 1)
-        return self._slope[idx] > 0
+        """True where the tide is rising (derivative of the smooth curve > 0)."""
+        idx, dt, s = self._segment(hours)
+        p0, p1 = self.cm[idx], self.cm[idx + 1]
+        m0, m1 = self._tangent[idx] * dt, self._tangent[idx + 1] * dt
+        s2 = s * s
+        d = (6 * s2 - 6 * s) * p0 + (3 * s2 - 4 * s + 1) * m0 + (-6 * s2 + 6 * s) * p1 + (3 * s2 - 2 * s) * m1
+        return d > 0
 
     def gate_open(self, hours, rule: GateRule):
         hours = np.asarray(hours, float)

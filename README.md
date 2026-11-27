@@ -6,7 +6,7 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 ## Input tabs
 - **Input**: barge fleet (name, Single / Double, up to 6 barges) and the generic barge cycle for all barges:
   towing distance (350 nm) and average speed (4 kn) -> sailing time calculated (87.5 h each way); load-out per
-  MP 24 h, port departure fabricator 3 h, port entry 3 h, load-in per MP 3 h, general load-in time allowance
+  MP 24 h, port departure fabricator 3 h, port entry 3 h, **load-in duration per MP 3 h (sets the tidal window)**, general load-in time allowance
   21 h, port departure 6 h. After changing barges or cargo classes press **Update tide matrix and barge start
   tables**.
 - **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns
@@ -17,6 +17,11 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
   latest date, monopile schedule (dates dd/mm/yyyy).
 - **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
+  Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
+  the calculation and the charts.
+- **Weather**: workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
+  Jun-Aug 90, Sep 85, Oct 75, Nov 65, Dec 50). Weather downtime per leg = sailing time x (100 / workability - 1),
+  month of the start of the leg; shown as *Weather downtime* before the sailing.
 - **Planning**: start date per barge (barges start at the fabricator yard); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
 
 ## Rules (draft)
@@ -28,8 +33,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure, a
    marshalling port berth from the port entry until the port departure (so also while waiting for the tide).
    When all berths are taken the barge waits.
-5. Load-in starts on a rising tide at or above the level of the load configuration (Double level with two
-   monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
+5. Load-in starts on a rising tide and the tide stays at or above the level of the load configuration for the
+   whole load-in (Double level with two monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
    the remaining monopile.
 6. After the last load-in: general load-in time allowance, port departure, sailing back.
 7. A barge back at the fabricator with no monopile ready is shown as *Waiting for fabricator* (no gaps in
@@ -37,8 +42,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 
 ## Results
 - **Planning**: Gantt per barge with all activities and waits, or (tab Planning, *Planning chart* = Detail of one
-  trip) one barge trip: tidal curve with the required levels, where the tide is rising and high enough (load-in
-  may start), the load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the
+  trip) one barge trip: tidal curve with the required level per barge configuration, green where the tide stays
+  at or above that level for at least the load-in duration (load-in possible), grey where it is too short, the
+  load-ins and tidal waits, and the trip activities on an hourly axis; opens zoomed in on the
   load-in(s).
 - **Tide**: tidal graph of the marshalling port (like the Tide Planner cycle view) with every load-in, pink
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
