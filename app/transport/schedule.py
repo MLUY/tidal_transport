@@ -166,6 +166,10 @@ class ScheduleResult:
         return sum(t.berth_wait_fab_h + t.berth_wait_port_h for t in self.trips)
 
     @property
+    def total_production_delay_h(self) -> float:
+        return sum(m.production_delay_h for m in self.monopiles)
+
+    @property
     def production_delay_count(self) -> int:
         return sum(m.production_delay_h > 1e-9 for m in self.monopiles)
 
@@ -309,11 +313,11 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
 
     # longest time (h) the tide stays at or above a level, starting on a rising tide, in the tidal data: a load-in
     # configuration is only possible when this is at least the load-in duration
-    _longest: dict = {}
+    _longest = tide.__dict__.setdefault("_longest_window", {})      # kept with the (cached) tide curve
 
     def longest_window(level: float) -> float:
         if level not in _longest:
-            hrs = np.arange(0.0, float(tide.hours[-1]), TIME_STEP_H)
+            hrs = np.arange(0.0, min(float(tide.hours[-1]), 24 * 370.0), TIME_STEP_H)   # one year is enough
             above = tide.level_cm(hrs) >= level
             edges = np.flatnonzero(np.diff(np.concatenate([[0], above.astype(int), [0]])))
             runs = (edges[1::2] - edges[::2]) * TIME_STEP_H

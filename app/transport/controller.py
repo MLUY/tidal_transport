@@ -144,7 +144,7 @@ def _sailing_text(params, **kwargs) -> str:
 
 
 CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
-OPT_RANGE_DAYS = 30
+OPT_RANGE_DAYS = 60
 UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result", "yard_name", "yard_lat", "yard_lon",
            "port_name", "port_lat", "port_lon"}        # do not change the planning      # display choices: no new calculation
 
@@ -169,6 +169,27 @@ def _trip_number(value) -> int:
         return int(str(value or "1").split(":")[0])
     except ValueError:
         return 1
+
+
+def _storage_status(res, html: bool = True) -> str:
+    """Storage requirement (production may never be delayed): met / not met."""
+    if not res.production_delay_count:
+        text = "storage requirement met (no production delay)"
+        return f"<span style='color:#2ca02c'>{text}</span>" if html else "MET - " + text
+    text = (f"STORAGE REQUIREMENT NOT MET: production delayed {res.production_delay_count}x "
+            f"({res.total_production_delay_h:.0f} h in total), storage full")
+    return f"<span style='color:#d62728'><b>{text}</b></span>" if html else text
+
+
+def _storage_check(params, **kwargs) -> str:
+    try:
+        res = _schedule(params)
+    except Exception:  # noqa: BLE001 - the views show the input error
+        return "-"
+    if not res.production_delay_count:
+        return _storage_status(res, html=False)
+    return (_storage_status(res, html=False) + ". Try: Optimise start dates, start barges earlier, an extra barge, "
+            "more storage or a longer Double barge max wait.")
 
 
 # ---------------------------------------------------------------- parametrization
@@ -245,6 +266,12 @@ class Parametrization(vkt.Parametrization):
     fabricator.yard_capacity = vkt.IntegerField("Fabrication yard storage capacity", suffix="MP", default=6, min=1,
                                                 flex=50)
     fabricator.fab_berths = vkt.IntegerField("Number of load-out berths available", default=1, min=1, flex=50)
+    fabricator.storage_requirement = vkt.Text(
+        "**Requirement - storage:** production at the fabricator may never be delayed. The storage may never be "
+        "full when a monopile is ready, so the barges must load out in time. The check below and the results "
+        "(Planning, Stock) show whether this requirement is met; the button *Optimise start dates* (tab Planning) "
+        "looks for start dates that meet it first.")
+    fabricator.storage_check = vkt.OutputField("Storage requirement check", value=_storage_check, flex=100)
     fabricator.ready = vkt.OptionField("Monopile produced and ready for load-out on", options=[READY_EARLIEST,
                                                                                               READY_LATEST],
                                        default=READY_EARLIEST, flex=100)
@@ -463,16 +490,18 @@ def _plan_inputs(p, data: bytes):
 
 
 def optimise_start_dates(barges, kwargs, range_days: int = OPT_RANGE_DAYS):
-    """Start date per barge (within +/- range_days of the given dates) with the earliest last load-in.
-    Search one barge at a time (coarse 3-day steps, then day by day around the best), repeated until nothing
-    improves. Ties: less total waiting. Returns (best barges, best result, original result)."""
+    """Start date per barge (within +/- range_days of the given dates): first no production delay at the
+    fabricator (storage requirement), then the earliest last load-in, then the least waiting.
+    Search one barge at a time (coarse 4-day steps, then day by day around the best), repeated until nothing
+    improves. Returns (best barges, best result, original result)."""
     def run(bs):
         try:
             res = plan_transport(barges=bs, **kwargs)
         except PlanningError:
-            return None, (datetime.max, float("inf"))
+            return None, (float("inf"), datetime.max, float("inf"))
         wait = res.total_tidal_wait_h + res.total_berth_wait_h
-        return res, (res.finish, wait)
+        # 1st: no production delay at the fabricator (requirement), 2nd: earliest last load-in, 3rd: least waiting
+        return res, (round(res.total_production_delay_h, 1), res.finish, wait)
 
     base = {b.name: b.start for b in barges}
     current = list(barges)
@@ -481,10 +510,10 @@ def optimise_start_dates(barges, kwargs, range_days: int = OPT_RANGE_DAYS):
     for _ in range(4):                                    # passes over all barges
         improved = False
         for k, b in enumerate(barges):
-            for offsets in (range(-range_days, range_days + 1, 3), None):
+            for offsets in (range(-range_days, range_days + 1, 4), None):
                 if offsets is None:                       # refine around the best so far, day by day
                     d0 = (current[k].start - base[b.name]).days
-                    offsets = [d for d in range(d0 - 2, d0 + 3) if abs(d) <= range_days]
+                    offsets = [d for d in range(d0 - 3, d0 + 4) if abs(d) <= range_days]
                 for d in offsets:
                     start = base[b.name] + timedelta(days=d)
                     if start == current[k].start:
@@ -523,9 +552,7 @@ def _summary(res) -> str:
     txt = (f"{len(res.monopiles)} monopiles in {len(res.trips)} trips ({n_double} double) | "
            f"start {res.start:%d %b %Y} | last load-in {res.finish:%d %b %Y}<br>tidal wait {res.total_tidal_wait_h:.0f} h"
            f" | berth wait {res.total_berth_wait_h:.0f} h | weather {res.total_weather_h:.0f} h")
-    if res.production_delay_count:
-        txt += f" | <span style='color:#d62728'>{res.production_delay_count} production delay(s), yard full</span>"
-    return txt
+    return txt + " | " + _storage_status(res)
 
 
 def _layout_title(fig, lines, height):
@@ -933,7 +960,7 @@ def build_stock(res) -> go.Figure:
     peak = max(n for _, n in st["fabricator"])
     _layout_title(fig, ["<b>Monopile stock</b>",
                         f"Fabricator max. {peak}" + (f" (capacity {res.yard_capacity})" if res.yard_capacity else "")
-                        + f" | {res.production_delay_count} production delay(s) | marshalling port "
+                        + f" | {_storage_status(res)} | marshalling port "
                           f"{len(res.monopiles)} delivered, last {res.finish:%d %b %Y}"], 720)
     fig.update_yaxes(title_text="Monopiles", dtick=1, rangemode="tozero", row=1, col=1)
     fig.update_yaxes(title_text="Monopiles", rangemode="tozero", row=2, col=1)
@@ -984,9 +1011,12 @@ class TransportPlan(vkt.Controller):
         gain = (first.finish - res.finish).total_seconds() / 86400 if first is not None else 0.0
         text = (f"Last load-in {res.finish:%d/%m/%Y %H:%M}" +
                 (f" ({gain:.1f} days earlier than before)" if gain > 0.01 else
+                 " (same end date, fewer production delays)" if first is not None
+                 and res.total_production_delay_h < first.total_production_delay_h - 0.05 else
                  " (same end date, less waiting)" if [b.start for b in best] != [b.start for b in barges] else
                  " (no better start dates found)") +
-                " | " + ", ".join(f"{b.name} {b.start:%d/%m/%Y}" for b in best))
+                " | " + ", ".join(f"{b.name} {b.start:%d/%m/%Y}" for b in best) + " | "
+                + _storage_status(res, html=False))
         return vkt.SetParamsResult({"planning": {"starts": starts, "optimise_result": text}})
 
     def update_tables(self, params, **kwargs):
