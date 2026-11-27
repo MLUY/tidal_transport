@@ -36,6 +36,7 @@ from .tide import TIME_STEP_H, DataEnd, GateRule, PlanningError, TideCurve, wait
 SINGLE, DOUBLE = "Single", "Double"
 READY_EARLIEST, READY_LATEST = "Earliest date", "Latest date"
 
+CAT_WAIT_FAB = "Waiting for fabricator"
 CAT_BERTH_FAB = "Waiting for berth (fabricator)"
 CAT_LOAD = "Load-out"
 CAT_WAIT_MP = "Waiting for monopile"
@@ -48,7 +49,7 @@ CAT_LOADIN = "Load-in"
 CAT_ALLOW = "Load-in time allowance"
 CAT_DEP = "Port departure"
 CAT_RETURN = "Sailing back"
-CATEGORIES = [CAT_BERTH_FAB, CAT_LOAD, CAT_WAIT_MP, CAT_DEP_FAB, CAT_SAIL, CAT_BERTH_MP, CAT_ENTRY, CAT_TIDE,
+CATEGORIES = [CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_LOAD, CAT_WAIT_MP, CAT_DEP_FAB, CAT_SAIL, CAT_BERTH_MP, CAT_ENTRY, CAT_TIDE,
               CAT_LOADIN, CAT_ALLOW, CAT_DEP, CAT_RETURN]
 
 
@@ -155,6 +156,23 @@ class ScheduleResult:
     @property
     def production_delay_count(self) -> int:
         return sum(m.production_delay_h > 1e-9 for m in self.monopiles)
+
+    def stock(self) -> dict:
+        """Number of monopiles over time at the fabricator, on the barges and at the marshalling port:
+        {location: [(time, count)]} at every change."""
+        events = {"fabricator": [], "barges": [], "port": []}
+        for m in self.monopiles:
+            events["fabricator"] += [(m.produced, 1), (m.loaded_out, -1)]
+            events["barges"] += [(m.loaded_out, 1), (m.loadin_start + timedelta(hours=self.cycle.loadin_h), -1)]
+            events["port"] += [(m.loadin_start + timedelta(hours=self.cycle.loadin_h), 1)]
+        out = {}
+        for key, ev in events.items():
+            n, pts = 0, []
+            for t, d in sorted(ev, key=lambda e: (e[0], e[1])):
+                n += d
+                pts.append((t, n))
+            out[key] = pts
+        return out
 
     def yard_stock(self) -> list:
         """(time, number of monopiles stored at the yard) at every change: +1 produced, -1 loaded out."""
@@ -306,6 +324,8 @@ def plan_transport(*, barges: list[Barge], classes: list[CargoClass], monopiles:
         tno = trip_count[best.name]
         label = f"{best.name} trip {tno}"
         berth_wait_fab = (load_start - ready_at).total_seconds() / 3600
+        seg(best.name, CAT_WAIT_FAB, free[best.name], ready_at, label,
+            f"At the fabricator, no monopile ready ({mp.name} ready {avail:%d-%m %H:%M})")
         seg(best.name, CAT_BERTH_FAB, ready_at, load_start, label, "All fabricator load-out berths taken")
 
         t = load_start + h(cycle.loadout_h)

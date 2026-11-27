@@ -10,19 +10,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import viktor as vkt
 
-from .schedule import (CAT_ALLOW, CAT_BERTH_FAB, CAT_BERTH_MP, CAT_DEP, CAT_DEP_FAB, CAT_ENTRY, CAT_LOAD,
+from .schedule import (CAT_ALLOW, CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_BERTH_MP, CAT_DEP, CAT_DEP_FAB, CAT_ENTRY, CAT_LOAD,
                        CAT_LOADIN, CAT_RETURN, CAT_SAIL, CAT_TIDE, CAT_WAIT_MP, DOUBLE, READY_EARLIEST, READY_LATEST,
                        SINGLE, Barge, CargoClass, Cycle, Monopile, plan_transport)
 from .tide import PlanningError, load_tide
 
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 MAX_BARGES = 6
-S_COLS = tuple(f"s{k}" for k in range(1, MAX_BARGES + 1))      # tide matrix: Single columns = barge 1 ... 6
-D_COLS = tuple(f"d{k}" for k in range(1, MAX_BARGES + 1))      # Double columns = barge 1 ... 6
+S_COLS = tuple(f"s{k}" for k in range(1, MAX_BARGES + 1))      # tide table: sb1 ... = 1st ... barge (Single)
+D_COLS = tuple(f"d{k}" for k in range(1, MAX_BARGES + 1))      # db1 ... = 1st ... Double barge (Double)
 NOT_ALLOWED = "x"
 TABS = ("input", "cargo", "fabricator", "port", "planning")
 
-COLORS = {CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_DEP_FAB: "#9467bd",
+COLORS = {CAT_WAIT_FAB: "#dbdb8d", CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_DEP_FAB: "#9467bd",
           CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
           CAT_LOADIN: "#2ca02c", CAT_ALLOW: "#98df8a", CAT_DEP: "#9467bd", CAT_RETURN: "#aec7e8"}
 
@@ -36,18 +36,31 @@ DEFAULT_CLASSES = [dict(name="A", from_t=1000, to_t=1200), dict(name="B", from_t
 _DEFAULT_LEVELS = {"A": ("520", "550"), "B": ("540", "600"), "C": ("560", NOT_ALLOWED), "D": ("580", NOT_ALLOWED)}
 
 
-def _matrix_row(code, barges):
+def _matrix_row(code, n_single, n_double):
     single, double = _DEFAULT_LEVELS.get(code, ("", ""))
-    row = dict(code=code)
-    for k, col in enumerate(S_COLS):
-        row[col] = single if k < len(barges) else ""
-    for k, col in enumerate(D_COLS):
-        row[col] = double if k < len(barges) and barges[k][1] == DOUBLE else ""
-    return row
+    return dict(code=code, **{S_COLS[k]: single for k in range(n_single)},
+                **{D_COLS[k]: double for k in range(n_double)})
 
 
-_FLEET = [(b["name"], b["configuration"]) for b in DEFAULT_BARGES]
-DEFAULT_MATRIX = [_matrix_row(c["name"], _FLEET) for c in DEFAULT_CLASSES]
+def _table_name(n_single: int, n_double: int) -> str:
+    """VIKTOR cannot hide table columns, so there is one tide level table per fleet composition
+    (number of barges, number of Double barges); only the one matching the fleet is shown."""
+    return f"m{n_single}_{n_double}"
+
+
+def _composition(params) -> tuple:
+    fleet = _fleet(params)
+    return len(fleet), sum(c == DOUBLE for _, c in fleet)
+
+
+def _default_table(n_single, n_double) -> list:
+    return [_matrix_row(c["name"], n_single, n_double) for c in DEFAULT_CLASSES]
+
+
+def _table_visible(n_single, n_double):
+    def visible(params, **kwargs):
+        return _composition(params) == (n_single, n_double)
+    return visible
 
 _MONOPILES = """1 OSS 1520 06/03/2028 21/03/2028
 2 WTG-31 1725 07/03/2028 22/03/2028
@@ -110,9 +123,12 @@ def _matrix_columns(params, **kwargs) -> str:
     fleet = _fleet(params)
     if not fleet:
         return "-"
-    single = ", ".join(f"Single b{k + 1} = {n}" for k, (n, _) in enumerate(fleet))
-    double = ", ".join(f"Double b{k + 1} = {n}" for k, (n, c) in enumerate(fleet) if c == DOUBLE) or "none"
-    return f"{single} | {double}"
+    if len(fleet) > MAX_BARGES:
+        return f"At most {MAX_BARGES} barges."
+    single = ", ".join(f"sb{k + 1} = {n}" for k, (n, _) in enumerate(fleet))
+    doubles = [n for n, c in fleet if c == DOUBLE]
+    double = ", ".join(f"db{k + 1} = {n}" for k, n in enumerate(doubles)) or "no Double barges"
+    return f"Single: {single} | Double: {double}"
 
 
 def _sailing_text(params, **kwargs) -> str:
@@ -163,16 +179,21 @@ class Parametrization(vkt.Parametrization):
     cargo.classes.from_t = vkt.NumberField("From", suffix="t")
     cargo.classes.to_t = vkt.NumberField("To", suffix="t")
     cargo.matrix_text = vkt.Text(
-        "### Tide levels for load-in (cm)\n*Rows: cargo classes. Columns: barges b1, b2, ... (1st, 2nd, ... barge of the fleet) - first the **Single** "
-        "configuration (one monopile on board), then the **Double** configuration (two monopiles). The value is the "
-        "tide level needed for the heaviest monopile on board; 'x' = configuration not possible.*")
+        "### Tide levels for load-in (cm)\n*Rows: cargo classes. Columns: first all barges in the **Single** "
+        "configuration (sb1, sb2, ...: one monopile on board), then the Double barges in the **Double** configuration "
+        "(db1, db2, ...: two monopiles). The value is the tide level needed for the heaviest monopile on board; "
+        "'x' = configuration not possible.*")
     cargo.columns = vkt.OutputField("Columns", value=_matrix_columns, flex=100)
-    cargo.matrix = vkt.Table("Tide levels for load-in (cm)", default=DEFAULT_MATRIX)
-    cargo.matrix.code = vkt.TextField("Code")
-    for _k, _col in enumerate(S_COLS):
-        setattr(cargo.matrix, _col, vkt.TextField(f"Single b{_k + 1}"))
-    for _k, _col in enumerate(D_COLS):
-        setattr(cargo.matrix, _col, vkt.TextField(f"Double b{_k + 1}"))
+    for _n in range(1, MAX_BARGES + 1):
+        for _d in range(0, _n + 1):
+            _table = vkt.Table("Tide levels for load-in (cm)", visible=_table_visible(_n, _d),
+                               default=_default_table(_n, _d))
+            _table.code = vkt.TextField("Code")
+            for _k in range(_n):
+                setattr(_table, S_COLS[_k], vkt.TextField(f"sb{_k + 1}"))
+            for _k in range(_d):
+                setattr(_table, D_COLS[_k], vkt.TextField(f"db{_k + 1}"))
+            setattr(cargo, _table_name(_n, _d), _table)
 
     # ---------------- Fabricator: yard, berths, monopile schedule
     fabricator = vkt.Tab("Fabricator")
@@ -255,14 +276,16 @@ def _inputs(p):
                for k, r in enumerate(p.classes or [])]
     fleet = _fleet(p)
     if len(fleet) > MAX_BARGES:
-        raise vkt.UserError(f"At most {MAX_BARGES} barges (columns of the tide level table).")
-    matrix = {str(r.code or "").strip(): r for r in (p.matrix or [])}
+        raise vkt.UserError(f"At most {MAX_BARGES} barges.")
+    n_double = sum(c == DOUBLE for _, c in fleet)
+    matrix = {str(r.code or "").strip(): r for r in (p.get(_table_name(len(fleet), n_double)) or [])}
     missing = [c.name for c in classes if c.name not in matrix]
     starts = {str(r.name or "").strip(): r.start for r in (p.starts or [])}
     if missing or any(n not in starts for n, _ in fleet):
         raise vkt.UserError("The tide level table or the barge start table does not match the barges / cargo classes "
                             "- press 'Update tide matrix and barge start tables' (tab Input).")
     barges = []
+    double_no = 0
     for k, (name, conf) in enumerate(fleet):
         try:
             start = _to_date(starts[name])
@@ -270,10 +293,13 @@ def _inputs(p):
             start = None
         if start is None:
             raise vkt.UserError(f"Barge start: '{starts[name]}' for {name} is not a valid date (dd/mm/yyyy).")
-        single = {c.name: _cm(matrix[c.name].get(S_COLS[k]), f"Single b{k + 1} ({name}) class {c.name}")
+        single = {c.name: _cm(matrix[c.name].get(S_COLS[k]), f"sb{k + 1} ({name}) class {c.name}")
                   for c in classes}
-        double = ({c.name: _cm(matrix[c.name].get(D_COLS[k]), f"Double b{k + 1} ({name}) class {c.name}")
-                   for c in classes} if conf == DOUBLE else {})
+        double = {}
+        if conf == DOUBLE:
+            double = {c.name: _cm(matrix[c.name].get(D_COLS[double_no]), f"db{double_no + 1} ({name}) class {c.name}")
+                      for c in classes}
+            double_no += 1
         barges.append(Barge(name=name, configuration=conf, start=datetime.combine(start, datetime.min.time()),
                             single_cm=single, double_cm=double))
     monopiles = []
@@ -444,29 +470,47 @@ def build_table(res) -> go.Figure:
     return fig
 
 
-def build_yard(res) -> go.Figure:
-    """Number of produced monopiles stored at the fabrication yard over time, with the yard capacity."""
-    stock = res.yard_stock()
-    fig = go.Figure(go.Scatter(x=[t for t, _ in stock], y=[n for _, n in stock], mode="lines", line_shape="hv",
-                               name="Monopiles at the yard", line=dict(color="#1f77b4", width=2),
-                               fill="tozeroy", fillcolor="rgba(31,119,180,0.15)"))
+def build_stock(res) -> go.Figure:
+    """Stock curves: monopiles at the fabricator (with the storage capacity) and on the barges (top), and
+    monopiles delivered at the marshalling port (bottom)."""
+    st = res.stock()
+
+    def xy(pts):
+        return [t for t, _ in pts], [n for _, n in pts]
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.5, 0.5], vertical_spacing=0.08,
+                        subplot_titles=("Fabricator and on the barges", "Marshalling port (delivered)"))
+    x, y = xy(st["fabricator"])
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line_shape="hv", name="At the fabricator",
+                             line=dict(color="#8c564b", width=2), fill="tozeroy",
+                             fillcolor="rgba(140,86,75,0.15)"), row=1, col=1)
+    x, y = xy(st["barges"])
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line_shape="hv", name="On the barges (in transit / waiting)",
+                             line=dict(color="#1f77b4", width=2, dash="dot")), row=1, col=1)
     if res.yard_capacity:
-        fig.add_hline(y=res.yard_capacity, line=dict(color="#d62728", dash="dash"),
-                      annotation_text=f"Storage capacity {res.yard_capacity}", annotation_position="top left")
+        fig.add_hline(y=res.yard_capacity, line=dict(color="#d62728", dash="dash"), row=1, col=1,
+                      annotation_text=f"Fabricator storage capacity {res.yard_capacity}",
+                      annotation_position="top left")
     delayed = [m for m in res.monopiles if m.production_delay_h > 1e-9]
     if delayed:
         fig.add_trace(go.Scatter(
             x=[m.produced for m in delayed], y=[res.yard_capacity] * len(delayed), mode="markers",
-            name="Production delayed (yard full)", marker=dict(symbol="x", size=10, color="#d62728"),
+            name="Production delayed (storage full)", marker=dict(symbol="x", size=10, color="#d62728"),
             text=[f"{m.number} {m.name}: ready {m.ready:%d-%m-%Y}, produced {m.produced:%d-%m-%Y %H:%M} "
-                  f"(+{m.production_delay_h:.0f} h)" for m in delayed], hoverinfo="text"))
-    peak = max(n for _, n in stock)
-    _layout_title(fig, ["<b>Fabrication yard stock</b>",
-                        f"Max. {peak} monopiles stored" + (f" (capacity {res.yard_capacity})" if res.yard_capacity
-                                                           else "") +
-                        f" | {res.production_delay_count} production delay(s)"], 520)
-    fig.update_yaxes(title_text="Monopiles at the yard", dtick=1, rangemode="tozero")
-    fig.update_layout(margin=dict(t=80), hovermode="x unified")
+                  f"(+{m.production_delay_h:.0f} h)" for m in delayed], hoverinfo="text"), row=1, col=1)
+    x, y = xy(st["port"])
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line_shape="hv", name="At the marshalling port",
+                             line=dict(color="#2ca02c", width=2), fill="tozeroy",
+                             fillcolor="rgba(44,160,44,0.15)"), row=2, col=1)
+    peak = max(n for _, n in st["fabricator"])
+    _layout_title(fig, ["<b>Monopile stock</b>",
+                        f"Fabricator max. {peak}" + (f" (capacity {res.yard_capacity})" if res.yard_capacity else "")
+                        + f" | {res.production_delay_count} production delay(s) | marshalling port "
+                          f"{len(res.monopiles)} delivered, last {res.finish:%d %b %Y}"], 720)
+    fig.update_yaxes(title_text="Monopiles", dtick=1, rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(title_text="Monopiles", rangemode="tozero", row=2, col=1)
+    fig.update_xaxes(type="date")
+    fig.update_layout(margin=dict(t=95), hovermode="x unified")
     return fig
 
 
@@ -479,26 +523,21 @@ class TransportPlan(vkt.Controller):
         """Tide level table (rows = cargo classes) and barge start table in line with the fleet / classes;
         existing values are kept, new rows get the default values."""
         fleet = _fleet(params)
+        if not fleet or len(fleet) > MAX_BARGES:
+            raise vkt.UserError(f"Define 1 to {MAX_BARGES} barges.")
+        n, d = len(fleet), sum(c == DOUBLE for _, c in fleet)
+        name = _table_name(n, d)
         codes = [str(r.name or "").strip() for r in (params.cargo.classes or []) if str(r.name or "").strip()]
-        old = {str(r.code or "").strip(): dict(r) for r in (params.cargo.matrix or [])}
+        old = {str(r.code or "").strip(): dict(r) for r in (params.cargo.get(name) or [])}
         matrix = []
-        for code in codes:
-            row = old.get(code) or _matrix_row(code, fleet)
-            for k, (name, conf) in enumerate(fleet):            # new barge columns get defaults, removed are emptied
-                default = _matrix_row(code, fleet)
-                if not str(row.get(S_COLS[k]) or "").strip():
-                    row[S_COLS[k]] = default[S_COLS[k]]
-                if conf == DOUBLE and not str(row.get(D_COLS[k]) or "").strip():
-                    row[D_COLS[k]] = default[D_COLS[k]]
-                if conf != DOUBLE:
-                    row[D_COLS[k]] = ""
-            for k in range(len(fleet), MAX_BARGES):
-                row[S_COLS[k]] = row[D_COLS[k]] = ""
-            matrix.append(row)
+        for code in codes:                                   # rows = cargo classes; empty cells get the default
+            row = dict(old.get(code) or {})
+            default = _matrix_row(code, n, d)
+            matrix.append({k: (row.get(k) if str(row.get(k) or "").strip() else v) for k, v in default.items()})
         starts_old = {str(r.name or "").strip(): r.start for r in (params.planning.starts or [])}
         first = starts_old.get(fleet[0][0]) if fleet else None
         starts = [dict(name=n, start=starts_old.get(n) or first or "15/03/2028") for n, _ in fleet]
-        return vkt.SetParamsResult({"cargo": {"matrix": matrix}, "planning": {"starts": starts}})
+        return vkt.SetParamsResult({"cargo": {name: matrix}, "planning": {"starts": starts}})
 
     @vkt.PlotlyView("Planning", duration_guess=1)
     def planning_view(self, params, **kwargs):
@@ -508,9 +547,9 @@ class TransportPlan(vkt.Controller):
     def tide_view(self, params, **kwargs):
         return vkt.PlotlyResult(build_tide(_schedule(params)))
 
-    @vkt.PlotlyView("Yard", duration_guess=1)
-    def yard_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_yard(_schedule(params)).to_json())
+    @vkt.PlotlyView("Stock", duration_guess=1)
+    def stock_view(self, params, **kwargs):
+        return vkt.PlotlyResult(build_stock(_schedule(params)).to_json())
 
     @vkt.PlotlyView("Table", duration_guess=1)
     def table_view(self, params, **kwargs):
