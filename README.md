@@ -1,42 +1,40 @@
-# Tidal Transport Planner (VIKTOR app) - first draft
+# Tidal Transport Planner (VIKTOR app) - draft
 
-Transport schedule for barges carrying monopiles from the fabrication yard to the marshalling port, taking
-into account cargo weight classes, barge configurations (Single / Double) and the tide at the marshalling
-port (load-in). Structure, tide file format and tide handling follow the Tide Planner app.
+Insight in the transport planning of monopile barges from the fabricator to the marshalling port, given the
+tidal restrictions for the load-in at the marshalling port. Specification: `instruct.txt`.
 
-## Input (tab *Input*)
-- **Barge fleet**: name + configuration. Single = exactly 1 monopile; Double = 1 or 2 monopiles.
-  After changing the fleet press **Update barge cycle and tide restriction tables**.
-- **Cargo weight classes** (default A-D, 1000-1800 t; from <= weight < to; up to 6 classes).
-- **Barge cycle** per barge: loading per monopile (24 h), sailing to port (96 h), discharging per monopile (2 h),
-  sailing back (96 h).
-- **Tide restrictions matrix**: minimum tide level (cm) for discharging, per barge and per class.
-  Single row for every barge, Double row for Double barges (class of the heaviest monopile counts).
-  `x` = not permitted. Columns 1-6 = 1st-6th cargo class.
-- **Delivery schedule**: load-out no., location, weight, earliest and latest load-out date as dd/mm/yyyy
-  (text: VIKTOR does not allow date fields in a table) - 37 monopiles.
-- **Planning**: fabrication yard capacity (default 6 stored monopiles); the barges start at the yard once this
-  number of monopiles is produced (default 2, i.e. the earliest date of monopile 2 - shown as *Start of
-  transport*); max. wait of a Double barge for the 2nd monopile.
-- **Tide**: csv (date-time, tide in cm above CD); default Gunsan 2026 hourly, repeated for other years.
+## Input tabs
+- **Input**: barge fleet (name, Single / Double, up to 6 barges) and the generic barge cycle for all barges:
+  towing distance (350 nm) and average speed (4 kn) -> sailing time calculated (87.5 h each way); load-out per
+  MP 24 h, port departure fabricator 3 h, port entry 3 h, load-in per MP 3 h, general load-in time allowance
+  21 h, port departure 6 h. After changing barges or cargo classes press **Update tide matrix and barge start
+  tables**.
+- **Cargo-cycle**: cargo weight classes (A-D) and the tide levels for load-in (cm): rows = classes, columns =
+  barges, first the Single configuration, then the Double configuration (level for the heaviest monopile on
+  board; `x` = not possible). The line *Columns* shows which barge each column is.
+- **Fabricator**: storage capacity (6), number of load-out berths (1), monopiles ready on the earliest or
+  latest date, monopile schedule (dates dd/mm/yyyy).
+- **Marshalling port**: number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
+- **Planning**: start date per barge (barges start at the fabricator yard); max. wait of a Double barge for the
+  second monopile.
 
-## Scheduling rules (first draft)
-1. Monopiles are shipped in load-out number order.
-2. Each monopile goes on the barge that can start loading it first (barges with `x` for its class skipped).
-3. A Double barge also takes the next monopile when the Double row permits the combination, that monopile
-   is available within the max. wait, and the tide reaches the Double level within a month after arrival.
-4. Discharging takes 2 h per monopile (4 h for a double trip), only when the tide is at or above the
-   required level for the whole discharging time;
-   otherwise the barge waits at the marshalling port.
-5. A load-out completed after the 'latest' date (end of day) is marked LATE.
-6. Yard capacity: monopile k can only be produced once monopile k - capacity has been loaded out. If that is
-   later than its earliest date, the fabricator is delayed (production delay, marked in the table).
+## Rules (draft)
+1. Monopiles are shipped in number order; each goes on the barge that can start its load-out first.
+2. A monopile is ready on its earliest/latest date, or later when the yard is full (monopile k only after
+   monopile k - capacity has been loaded out = production delay).
+3. A Double barge takes the next monopile too when the Double column permits it and it is ready within the
+   max. wait.
+4. Berths: a fabricator berth is occupied from the start of the load-out until the port departure, a
+   marshalling port berth from the port entry until the port departure (so also while waiting for the tide).
+   When all berths are taken the barge waits.
+5. Load-in starts on a rising tide at or above the level of the load configuration (Double level with two
+   monopiles on board). With two monopiles the second load-in waits for the next tide, at the Single level of
+   the remaining monopile.
+6. After the last load-in: general load-in time allowance, port departure, sailing back.
 
 ## Results
-- **Planning**: Gantt per barge (loading, waiting for monopile, sailing, tidal wait, discharging, sailing back).
-- **Load-in**: tide at the marshalling port with the required level and load-in moment of every trip;
-  below the tidal waits and discharging per barge.
-- **Yard**: number of monopiles stored at the fabrication yard over time, with the capacity and the
-  production delays.
-- **Table**: per monopile: class, barge/trip, single/double, load-out, arrival, required tide, tidal wait,
-  load-in, on time.
+- **Planning**: Gantt per barge with all activities and waits.
+- **Load-in**: tide at the marshalling port with every load-in; below the tidal waits and load-ins per barge.
+- **Yard**: monopiles stored at the fabrication yard vs. the storage capacity, production delays.
+- **Table**: per monopile: class, ready / produced, barge / trip, single / double, load-out, arrival, load-in,
+  required tide, tidal wait.
