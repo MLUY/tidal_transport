@@ -67,7 +67,13 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   vertical areas where barges wait for the tide and below the Gantt bars of all barge activities. Hover shows the
   barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
   move to a date, drag in the graph to zoom (also the y-axis), double-click to reset.
-- **Towing**: grey map of Korea with the fabrication yard, the marshalling port and an indicative towing route
+- **Weather** (view, was Towing): by default the grey map of Korea with the fabrication yard, the marshalling port,
+  an indicative towing route and the **wave data locations** (red diamonds). Tab *Weather* (input) -> *Show*:
+  *Weather windows per location* or *combined*: availability of a weather window (Hs below the limit for the whole
+  window) for window lengths in steps of 6 h per Hs limit, and per month for one Hs limit. Combined = all
+  locations at the same moments, highest Hs counts.
+  Wave data: csv files `<lon>E_<lat>N.csv` (or `<lon>E,<lat>N.csv`) with Year, Month, Day, Hour, Hs (2nd row units)
+  in the repository root or `sample_data/waves`. Map
   (display only; the planning uses the towing distance input). Map data: Natural Earth 1:10m (public domain),
   taken from the world-atlas package (ISC licence), embedded in `app/transport/korea_map.json` - no map service
   needed.

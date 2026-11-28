@@ -17,6 +17,7 @@ from .schedule import (CAT_ALLOW, CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_BERTH_MP, CAT
                        plan_transport)
 from .export import build_activities_csv, build_cycles_excel, build_html_report, build_planning_excel
 from .tide import PlanningError, load_tide
+from . import waves
 
 DEFAULT_TIDE = Path(__file__).resolve().parents[2] / "sample_data" / "gunsan_tide_2026_hourly.csv"
 MAX_BARGES = 6
@@ -143,10 +144,16 @@ def _sailing_text(params, **kwargs) -> str:
     return f"{hrs:.1f} h ({hrs / 24:.1f} days) each way"
 
 
+WAVE_MAP, WAVE_ONE, WAVE_ALL = "Map with wave data locations", "Weather windows per location", \
+    "Weather windows combined"
 CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
 OPT_RANGE_DAYS = 60
 UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result", "yard_name", "yard_lat", "yard_lon",
-           "port_name", "port_lat", "port_lon"}        # do not change the planning      # display choices: no new calculation
+           "port_name", "port_lat", "port_lon", "wave_view", "wave_location", "hs_limits", "hs_month", "max_window"}        # do not change the planning      # display choices: no new calculation
+
+
+def _wave_options(params, **kwargs) -> list:
+    return [p.stem for p in waves.wave_files()] or ["-"]
 
 
 def _barge_options(params, **kwargs) -> list:
@@ -312,6 +319,21 @@ class Parametrization(vkt.Parametrization):
                                                                       zip(MONTHS, DEFAULT_WORKABILITY)])
     weather.workability.month = vkt.TextField("Month")
     weather.workability.pct = vkt.NumberField("Workability", suffix="%")
+
+    weather.wave_text = vkt.Text(
+        "### Wave data (view Weather)\n*Wave data files (Hs per hour or per 3 hours) in the repository, named after "
+        "their position (e.g. 125.667E_34.500N.csv). Weather window: Hs stays below the limit for at least the "
+        "window length; availability = % of the time such a window can start. Combined: all locations at the same "
+        "moments, the highest Hs counts. These settings do not change the planning.*")
+    weather.wave_view = vkt.OptionField("Show", options=[WAVE_MAP, WAVE_ONE, WAVE_ALL], default=WAVE_MAP, flex=100)
+    weather.wave_location = vkt.OptionField("Location", options=_wave_options, flex=100,
+                                            visible=vkt.IsEqual(vkt.Lookup("weather.wave_view"), WAVE_ONE))
+    weather.hs_limits = vkt.TextField("Hs limits (m)", default="1.0, 1.5, 2.0, 2.5, 3.0", flex=50,
+                                      visible=vkt.IsNotEqual(vkt.Lookup("weather.wave_view"), WAVE_MAP))
+    weather.max_window = vkt.IntegerField("Longest window", suffix="h", default=96, min=6, step=6, flex=50,
+                                          visible=vkt.IsNotEqual(vkt.Lookup("weather.wave_view"), WAVE_MAP))
+    weather.hs_month = vkt.NumberField("Hs limit for the monthly table", suffix="m", default=2.0, min=0.1, flex=50,
+                                       visible=vkt.IsNotEqual(vkt.Lookup("weather.wave_view"), WAVE_MAP))
 
     # ---------------- Planning: barge start dates
     planning = vkt.Tab("Planning")
@@ -911,17 +933,91 @@ def build_towing(p) -> go.Figure:
     lats, lons = [x[0] for x in pts], [x[1] for x in pts]
     lat0, lat1 = min(lats + [33.0]) - 0.4, max(lats + [38.7]) + 0.4
     lon0, lon1 = min(lons + [124.6]) - 0.4, max(lons + [130.0]) + 0.4
+    # wave data locations (from the file names); locations outside the map are listed in the title
+    inside, outside = [], []
+    for f in waves.wave_files():
+        lon, lat = waves.position(f)
+        (inside if lat0 <= lat <= lat1 and lon0 <= lon <= lon1 else outside).append((f.stem, lon, lat))
+    if inside:
+        fig.add_trace(go.Scatter(
+            x=[x[1] for x in inside], y=[x[2] for x in inside], mode="markers+text", name="Wave data location",
+            text=[f"{x[2]:.3f}N {x[1]:.3f}E" for x in inside],
+            textposition=["middle left" if x[1] < 127.5 else "top left" if x[1] > lon1 - 1.5 else "middle right"
+                          for x in inside],
+            textfont=dict(size=11, color="#d62728"),
+            marker=dict(symbol="diamond", size=13, color="#d62728", line=dict(color="white", width=1.5)),
+            hovertext=[f"Wave data: {x[0]}.csv<br>{x[2]:.3f}°N, {x[1]:.3f}°E" for x in inside], hoverinfo="text"))
+    outside_note = ("<br><sup>Wave data outside the map: " + ", ".join(f"{x[0]}.csv ({x[2]:g}N {x[1]:g}E)"
+                                                                       for x in outside) + "</sup>") if outside else ""
     ratio = 1 / np.cos(np.radians((lat0 + lat1) / 2))     # keeps the map in proportion at this latitude
     fig.update_xaxes(range=[lon0, lon1], showgrid=False, zeroline=False, ticksuffix="°E", constrain="domain")
     fig.update_yaxes(range=[lat0, lat1], showgrid=False, zeroline=False, ticksuffix="°N", scaleanchor="x",
                      scaleratio=ratio, constrain="domain")
     distance = float(p.distance_nm or 0)
-    _layout_title(fig, [f"<b>Towing {yard_name} - {port_name}</b>",
+    _layout_title(fig, [f"<b>Weather - towing route {yard_name} - {port_name} and wave data locations</b>",
                         f"Towing distance (input) {distance:g} nm | indicative route on the map ~{route_nm:.0f} nm | "
                         f"straight line {_nm(yard, port):.0f} nm<br><sup>Map data: Natural Earth (public domain). The "
-                        f"route is indicative only; the planning uses the towing distance input.</sup>"], 760)
+                        f"route is indicative only; the planning uses the towing distance input.</sup>"
+                        + outside_note], 760)
     fig.update_layout(margin=dict(t=95, l=60, r=10, b=40), plot_bgcolor="#f4f6f8",
                       legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"))
+    return fig
+
+
+def _limits(text) -> list:
+    try:
+        vals = sorted({float(x) for x in str(text or "").replace(";", ",").split(",") if x.strip()})
+    except ValueError:
+        raise vkt.UserError("Hs limits: enter numbers separated by commas, e.g. 1.0, 1.5, 2.0")
+    if not vals or any(v <= 0 for v in vals):
+        raise vkt.UserError("Hs limits: enter one or more positive numbers, e.g. 1.0, 1.5, 2.0")
+    return vals
+
+
+def build_windows(p) -> go.Figure:
+    """Weather window availability per Hs limit for window lengths in steps of 6 h (top), and per month for one
+    Hs limit (bottom), for one wave data location or all locations combined."""
+    files = waves.wave_files()
+    if not files:
+        raise vkt.UserError("No wave data files found (csv named like 125.667E_34.500N.csv).")
+    if p.get("wave_view") == WAVE_ONE:
+        name = p.get("wave_location") or files[0].stem
+        path = next((f for f in files if f.stem == name), files[0])
+        series = waves.load(path)
+        where = f"{series.label} ({series.lat:.3f}°N, {series.lon:.3f}°E)"
+    else:
+        series = waves.combined(waves.all_series())
+        where = f"all {len(files)} locations combined (highest Hs at each moment)"
+    limits = _limits(p.get("hs_limits"))
+    longest = max(int(p.get("max_window") or 96) // 6 * 6, 6)
+    windows = list(range(6, longest + 1, 6))
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.52, 0.48], vertical_spacing=0.14,
+                        subplot_titles=("Availability of a weather window (whole year)",
+                                        f"Per month - Hs < {float(p.get('hs_month') or 2.0):g} m"))
+    colors = px.colors.sequential.Blues[3:] + ["#08306b"]
+    for k, lim in enumerate(limits):
+        av = waves.window_availability(series.hs, series.step_h, lim, windows)
+        fig.add_trace(go.Scatter(x=windows, y=av, mode="lines+markers", name=f"Hs < {lim:g} m",
+                                 line=dict(color=colors[min(k * len(colors) // max(len(limits), 1), len(colors) - 1)],
+                                           width=2.5),
+                                 hovertemplate=f"Hs < {lim:g} m, window %{{x}} h: %{{y:.1f}} % of the time"
+                                               "<extra></extra>"), row=1, col=1)
+    hs_m = float(p.get("hs_month") or 2.0)
+    month_av = waves.monthly_availability(series, hs_m, windows)
+    fig.add_trace(go.Heatmap(z=month_av, x=[f"{w} h" for w in windows], y=MONTHS, colorscale="RdYlGn", zmin=0,
+                             zmax=100, text=np.round(month_av).astype(int), texttemplate="%{text}",
+                             textfont=dict(size=10), colorbar=dict(title="%", len=0.45, y=0.22),
+                             hovertemplate="%{y}, window %{x}: %{z:.1f} %<extra></extra>", showlegend=False),
+                  row=2, col=1)
+    fig.update_xaxes(title_text="Window length (h, steps of 6 h)", dtick=6, row=1, col=1)
+    fig.update_yaxes(title_text="% of the time a window can start", range=[0, 100], row=1, col=1)
+    fig.update_yaxes(autorange="reversed", row=2, col=1)
+    _layout_title(fig, ["<b>Weather windows</b> - " + where,
+                        f"Wave data {series.period}, every {series.step_h:g} h | window: Hs stays below the limit for "
+                        f"the whole window length<br><sup>Availability = percentage of the time at which a window of "
+                        f"that length can start (the rest of the time it is exceeded within the window).</sup>"], 900)
+    fig.update_layout(margin=dict(t=110, l=70, r=20, b=40), hovermode="closest",
+                      legend=dict(x=1.01, y=1.0, yanchor="top"))
     return fig
 
 
@@ -1054,9 +1150,12 @@ class TransportPlan(vkt.Controller):
     def tide_view(self, params, **kwargs):
         return vkt.PlotlyResult(build_tide(_schedule(params)))
 
-    @vkt.PlotlyView("Towing", duration_guess=1)
-    def towing_view(self, params, **kwargs):
-        return vkt.PlotlyResult(build_towing(_flat(params)).to_json())
+    @vkt.PlotlyView("Weather", duration_guess=2)
+    def weather_view(self, params, **kwargs):
+        p = _flat(params)
+        if p.get("wave_view") in (WAVE_ONE, WAVE_ALL):
+            return vkt.PlotlyResult(build_windows(p).to_json())
+        return vkt.PlotlyResult(build_towing(p).to_json())
 
     @vkt.PlotlyView("Stock", duration_guess=1)
     def stock_view(self, params, **kwargs):
