@@ -25,6 +25,7 @@ S_COLS = tuple(f"s{k}" for k in range(1, MAX_BARGES + 1))      # tide table: sb1
 D_COLS = tuple(f"d{k}" for k in range(1, MAX_BARGES + 1))      # db1 ... = 1st ... Double barge (Double)
 NOT_ALLOWED = "x"
 TABS = ("input", "cargo", "fabricator", "port", "weather", "planning", "export")
+SECTIONS = ("sailing", "waves")          # sections of the Weather tab (flattened like the tabs)
 
 COLORS = {CAT_WAIT_FAB: "#dbdb8d", CAT_BERTH_FAB: "#bcbd22", CAT_LOAD: "#8c564b", CAT_WAIT_MP: "#c7c7c7", CAT_DEP_FAB: "#9467bd",
           CAT_WEATHER: "#17becf", CAT_SAIL: "#1f77b4", CAT_BERTH_MP: "#ff7f0e", CAT_ENTRY: "#9467bd", CAT_TIDE: "#d62728",
@@ -110,7 +111,7 @@ DEFAULT_MONOPILES = [dict(number=int(n), name=nm, weight_t=float(w), earliest=e,
 def _flat(params):
     out = {}
     for key, value in params.items():
-        if key in TABS and isinstance(value, dict):
+        if key in TABS + SECTIONS and isinstance(value, dict):
             out.update(_flat(value))
         else:
             out[key] = value
@@ -309,31 +310,34 @@ class Parametrization(vkt.Parametrization):
 
     # ---------------- Weather: monthly workability for the sailing legs
     weather = vkt.Tab("Weather")
-    weather.text = vkt.Text(
-        "### Weather workability for sailing\n*Percentage of the time the weather allows towing, per month. It is "
+    # all fields in sections (collapsible); the workability table starts closed to save space
+    weather.sailing = vkt.Section("Weather window for sailing - workability per month", initially_expanded=False)
+    weather.sailing.text = vkt.Text(
+        "*Percentage of the time the weather allows towing, per month. It is "
         "applied to both sailing legs (fabricator -> marshalling port and back): weather downtime = sailing time x "
         "(100 / workability - 1), using the month in which the leg starts. Example: 87.5 h sailing in January (60 %) "
         "gives 58.3 h weather downtime. 100 % = no weather downtime. Default values are reasonable starting "
         "points; replace them by the metocean data of the route.*")
-    weather.workability = vkt.Table("Workability per month", default=[dict(month=m, pct=v) for m, v in
+    weather.sailing.workability = vkt.Table("Workability per month", default=[dict(month=m, pct=v) for m, v in
                                                                       zip(MONTHS, DEFAULT_WORKABILITY)])
-    weather.workability.month = vkt.TextField("Month")
-    weather.workability.pct = vkt.NumberField("Workability", suffix="%")
+    weather.sailing.workability.month = vkt.TextField("Month")
+    weather.sailing.workability.pct = vkt.NumberField("Workability", suffix="%")
 
-    weather.wave_text = vkt.Text(
-        "### Wave data (view Weather)\n*Wave data files (Hs per hour or per 3 hours) in the repository, named after "
+    weather.waves = vkt.Section("Wave data (view Weather)", initially_expanded=True)
+    weather.waves.wave_text = vkt.Text(
+        "*Wave data files (Hs per hour or per 3 hours) in the repository, named after "
         "their position (e.g. 125.667E_34.500N.csv). Weather window: Hs stays below the limit for at least the "
         "window length; availability = % of the time such a window can start. Combined: all locations at the same "
         "moments, the highest Hs counts. These settings do not change the planning.*")
-    weather.wave_view = vkt.OptionField("Show", options=[WAVE_MAP, WAVE_ONE, WAVE_ALL], default=WAVE_MAP, flex=100)
-    weather.wave_location = vkt.OptionField("Location", options=_wave_options, flex=100,
-                                            visible=vkt.IsEqual(vkt.Lookup("weather.wave_view"), WAVE_ONE))
-    weather.hs_limits = vkt.TextField("Hs limits (m)", default="1.0, 1.5, 2.0, 2.5, 3.0", flex=50,
-                                      visible=vkt.IsNotEqual(vkt.Lookup("weather.wave_view"), WAVE_MAP))
-    weather.max_window = vkt.IntegerField("Longest window", suffix="h", default=96, min=6, step=6, flex=50,
-                                          visible=vkt.IsNotEqual(vkt.Lookup("weather.wave_view"), WAVE_MAP))
-    weather.hs_month = vkt.NumberField("Hs limit for the monthly table", suffix="m", default=2.0, min=0.1, flex=50,
-                                       visible=vkt.IsNotEqual(vkt.Lookup("weather.wave_view"), WAVE_MAP))
+    weather.waves.wave_view = vkt.OptionField("Show", options=[WAVE_MAP, WAVE_ONE, WAVE_ALL], default=WAVE_MAP, flex=100)
+    weather.waves.wave_location = vkt.OptionField("Location", options=_wave_options, flex=100,
+                                            visible=vkt.IsEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_ONE))
+    weather.waves.hs_limits = vkt.TextField("Hs limits (m)", default="1.0, 1.5, 2.0, 2.5, 3.0", flex=50,
+                                      visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP))
+    weather.waves.max_window = vkt.IntegerField("Longest window", suffix="h", default=96, min=6, step=6, flex=50,
+                                          visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP))
+    weather.waves.hs_month = vkt.NumberField("Hs limit for the monthly table", suffix="m", default=2.0, min=0.1, flex=50,
+                                       visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP))
 
     # ---------------- Planning: barge start dates
     planning = vkt.Tab("Planning")
@@ -950,17 +954,20 @@ def build_towing(p) -> go.Figure:
     outside_note = ("<br><sup>Wave data outside the map: " + ", ".join(f"{x[0]}.csv ({x[2]:g}N {x[1]:g}E)"
                                                                        for x in outside) + "</sup>") if outside else ""
     ratio = 1 / np.cos(np.radians((lat0 + lat1) / 2))     # keeps the map in proportion at this latitude
-    fig.update_xaxes(range=[lon0, lon1], showgrid=False, zeroline=False, ticksuffix="°E", constrain="domain")
+    # the x-range widens to fill the full width (map in proportion via scaleanchor); zoom and pan stay possible
+    fig.update_xaxes(range=[lon0, lon1], showgrid=False, zeroline=False, ticksuffix="°E", constrain="range",
+                     fixedrange=False)
     fig.update_yaxes(range=[lat0, lat1], showgrid=False, zeroline=False, ticksuffix="°N", scaleanchor="x",
-                     scaleratio=ratio, constrain="domain")
+                     scaleratio=ratio, constrain="domain", fixedrange=False)
     distance = float(p.distance_nm or 0)
     _layout_title(fig, [f"<b>Weather - towing route {yard_name} - {port_name} and wave data locations</b>",
                         f"Towing distance (input) {distance:g} nm | indicative route on the map ~{route_nm:.0f} nm | "
                         f"straight line {_nm(yard, port):.0f} nm<br><sup>Map data: Natural Earth (public domain). The "
-                        f"route is indicative only; the planning uses the towing distance input.</sup>"
+                        f"route is indicative only; the planning uses the towing distance input. Zoom: drag a box, or the + / - "
+                        f"buttons top right (scroll wheel where supported); double-click to reset.</sup>"
                         + outside_note], 760)
-    fig.update_layout(margin=dict(t=95, l=60, r=10, b=40), plot_bgcolor="#f4f6f8",
-                      legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"))
+    fig.update_layout(margin=dict(t=95, l=60, r=20, b=70), plot_bgcolor="#f4f6f8", dragmode="zoom",
+                      legend=dict(orientation="h", x=0, xanchor="left", y=-0.06, yanchor="top"))
     return fig
 
 
@@ -1155,7 +1162,9 @@ class TransportPlan(vkt.Controller):
         p = _flat(params)
         if p.get("wave_view") in (WAVE_ONE, WAVE_ALL):
             return vkt.PlotlyResult(build_windows(p).to_json())
-        return vkt.PlotlyResult(build_towing(p).to_json())
+        fig = json.loads(build_towing(p).to_json())
+        fig["config"] = {"scrollZoom": True, "displayModeBar": True}     # zoom with the scroll wheel (if supported)
+        return vkt.PlotlyResult(fig)
 
     @vkt.PlotlyView("Stock", duration_guess=1)
     def stock_view(self, params, **kwargs):

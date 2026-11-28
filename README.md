@@ -20,7 +20,7 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Marshalling port**: name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
   Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
   the calculation and the charts.
-- **Weather**: workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
+- **Weather**: section *Weather window for sailing* (collapsed by default): workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
   Jun-Aug 90, Sep 85, Oct 75, Nov 65, Dec 50). Weather downtime per leg = sailing time x (100 / workability - 1),
   month of the start of the leg; shown as *Weather downtime* before the sailing.
 - **Planning**: start date per barge (barges start at the fabricator yard); button **Optimise start dates**:
@@ -68,7 +68,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   barge configuration (single / double, monopiles, classes). Zoom: buttons (1 week ... all) + range slider to
   move to a date, drag in the graph to zoom (also the y-axis), double-click to reset.
 - **Weather** (view, was Towing): by default the grey map of Korea with the fabrication yard, the marshalling port,
-  an indicative towing route and the **wave data locations** (red diamonds). Tab *Weather* (input) -> *Show*:
+  an indicative towing route and the **wave data locations** (red diamonds); full width, legend below,
+  zoom with a box, the + / - buttons or the scroll wheel. Tab *Weather* (input) -> *Show*:
   *Weather windows per location* or *combined*: availability of a weather window (Hs below the limit for the whole
   window) for window lengths in steps of 6 h per Hs limit, and per month for one Hs limit. Combined = all
   locations at the same moments, highest Hs counts.
