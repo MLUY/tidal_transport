@@ -20,7 +20,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Marshalling port**: name and position (default Gunsan, 35.98°N 126.62°E), number of load-in berths (1), tidal data (csv; default Gunsan 2026, repeated yearly).
   Between the data points the tide follows a smooth curve (cubic, through every data point), used for both
   the calculation and the charts.
-- **Weather**: section *Weather window for sailing* (collapsed by default): workability (%) per month for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
+- **Weather**: section *Weather window for sailing* (collapsed by default): workability (%) per month, an explanation
+  and a free-text field *Notes - basis of the workability* (scenario, source; not used in the calculation, included
+  in the Excel export) for the sailing legs (default Jan 60, Feb 65, Mar 75, Apr 80, May 85,
   Jun-Aug 90, Sep 85, Oct 75, Nov 65, Dec 50). Weather downtime per leg = sailing time x (100 / workability - 1),
   month of the start of the leg; shown as *Weather downtime* before the sailing.
 - **Planning**: start date per barge (barges start at the fabricator yard); button **Optimise start dates**:

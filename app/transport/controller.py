@@ -151,7 +151,7 @@ MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "
 CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
 OPT_RANGE_DAYS = 60
 UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result", "yard_name", "yard_lat", "yard_lon",
-           "port_name", "port_lat", "port_lon", "wave_view", "wave_files", "hs_limit", "max_window", "month_from",
+           "port_name", "port_lat", "port_lon", "workability_notes", "wave_view", "wave_files", "hs_limit", "max_window", "month_from",
            "month_to"}        # do not change the planning      # display choices: no new calculation
 
 
@@ -314,16 +314,20 @@ class Parametrization(vkt.Parametrization):
     weather = vkt.Tab("Weather")
     # all fields in sections (collapsible); the workability table starts closed to save space
     weather.sailing = vkt.Section("Weather window for sailing - workability per month", initially_expanded=False)
+    weather.sailing.workability = vkt.Table("Workability per month", default=[dict(month=m, pct=v) for m, v in
+                                                                      zip(MONTHS, DEFAULT_WORKABILITY)])
+    weather.sailing.workability.month = vkt.TextField("Month")
+    weather.sailing.workability.pct = vkt.NumberField("Workability", suffix="%")
     weather.sailing.text = vkt.Text(
         "*Percentage of the time the weather allows towing, per month. It is "
         "applied to both sailing legs (fabricator -> marshalling port and back): weather downtime = sailing time x "
         "(100 / workability - 1), using the month in which the leg starts. Example: 87.5 h sailing in January (60 %) "
         "gives 58.3 h weather downtime. 100 % = no weather downtime. Default values are reasonable starting "
         "points; replace them by the metocean data of the route.*")
-    weather.sailing.workability = vkt.Table("Workability per month", default=[dict(month=m, pct=v) for m, v in
-                                                                      zip(MONTHS, DEFAULT_WORKABILITY)])
-    weather.sailing.workability.month = vkt.TextField("Month")
-    weather.sailing.workability.pct = vkt.NumberField("Workability", suffix="%")
+    weather.sailing.workability_notes = vkt.TextAreaField(
+        "Notes - basis of the workability", flex=100,
+        description="Manual notes, e.g. data source, Hs limit, route, scenario. Not used in the calculation; "
+                    "included in the Excel export.")
 
     weather.waves = vkt.Section("Wave data (view Weather)", initially_expanded=True)
     weather.waves.wave_text = vkt.Text(
@@ -582,7 +586,8 @@ def _export_inputs(p) -> list:
             ("Monopiles ready on", p.ready),
             ("Marshalling port", f"{p.port_name} ({p.port_lat}, {p.port_lon})"), ("Load-in berths", p.port_berths),
             ("Tidal data", p.tide_file.filename if p.tide_file else "default Gunsan 2026 (repeated yearly)"),
-            ("Weather workability", wk), ("Double barge max wait (h)", p.max_wait_second)]
+            ("Weather workability", wk), ("Notes - basis of the workability", p.get("workability_notes") or ""),
+            ("Double barge max wait (h)", p.max_wait_second)]
 
 
 # ---------------------------------------------------------------- figures
