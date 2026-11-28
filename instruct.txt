@@ -1,4 +1,16 @@
-not all the tabs on the left are showing, rename 
-cargo-cycle to cycle
-Fabricator to Fab-P
-Marshalling port to Mar-P
+note the 5 new csv files
+
+the name represents easting and northing such as 125.667E_34.500N.csv
+plot the locations of each file as markers in the map displaying under the towing tab
+rename towing to weather
+
+the files contain wave data hs against er hour
+
+as a default show the map with markers
+
+also show an option to display the weather data per file or combined
+show exeedence of time windows of certain wave heights
+time windows should be insteps of 6 hours
+
+
+
