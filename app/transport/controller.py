@@ -150,7 +150,7 @@ WAVE_MAP, WAVE_ONE, WAVE_ALL = "Map with wave data locations", "Weather windows 
 CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
 OPT_RANGE_DAYS = 60
 UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result", "yard_name", "yard_lat", "yard_lon",
-           "port_name", "port_lat", "port_lon", "wave_view", "wave_location", "hs_limits", "hs_month", "max_window"}        # do not change the planning      # display choices: no new calculation
+           "port_name", "port_lat", "port_lon", "wave_view", "wave_location", "hs_limit", "max_window"}        # do not change the planning      # display choices: no new calculation
 
 
 def _wave_options(params, **kwargs) -> list:
@@ -332,12 +332,13 @@ class Parametrization(vkt.Parametrization):
     weather.waves.wave_view = vkt.OptionField("Show", options=[WAVE_MAP, WAVE_ONE, WAVE_ALL], default=WAVE_MAP, flex=100)
     weather.waves.wave_location = vkt.OptionField("Location", options=_wave_options, flex=100,
                                             visible=vkt.IsEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_ONE))
-    weather.waves.hs_limits = vkt.TextField("Hs limits (m)", default="1.0, 1.5, 2.0, 2.5, 3.0", flex=50,
-                                      visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP))
+    weather.waves.hs_limit = vkt.NumberField(
+        "Hs limit (MWS)", suffix="m", default=2.5, min=0.25, max=5.0, step=0.25, variant="slider", flex=100,
+        visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP),
+        description="Significant wave height limit set by the Marine Warranty Surveyor (MWS) for the tow; the weather "
+                    "windows are checked against this limit.")
     weather.waves.max_window = vkt.IntegerField("Longest window", suffix="h", default=96, min=6, step=6, flex=50,
                                           visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP))
-    weather.waves.hs_month = vkt.NumberField("Hs limit for the monthly table", suffix="m", default=2.0, min=0.1, flex=50,
-                                       visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP))
 
     # ---------------- Planning: barge start dates
     planning = vkt.Tab("Planning")
@@ -971,16 +972,6 @@ def build_towing(p) -> go.Figure:
     return fig
 
 
-def _limits(text) -> list:
-    try:
-        vals = sorted({float(x) for x in str(text or "").replace(";", ",").split(",") if x.strip()})
-    except ValueError:
-        raise vkt.UserError("Hs limits: enter numbers separated by commas, e.g. 1.0, 1.5, 2.0")
-    if not vals or any(v <= 0 for v in vals):
-        raise vkt.UserError("Hs limits: enter one or more positive numbers, e.g. 1.0, 1.5, 2.0")
-    return vals
-
-
 def build_windows(p) -> go.Figure:
     """Weather window availability per Hs limit for window lengths in steps of 6 h (top), and per month for one
     Hs limit (bottom), for one wave data location or all locations combined."""
@@ -995,22 +986,20 @@ def build_windows(p) -> go.Figure:
     else:
         series = waves.combined(waves.all_series())
         where = f"all {len(files)} locations combined (highest Hs at each moment)"
-    limits = _limits(p.get("hs_limits"))
+    lim = round(float(p.get("hs_limit") or 2.5) * 4) / 4          # MWS limit, steps of 0.25 m
+    if lim <= 0:
+        raise vkt.UserError("Hs limit (MWS) must be more than 0 m.")
     longest = max(int(p.get("max_window") or 96) // 6 * 6, 6)
     windows = list(range(6, longest + 1, 6))
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.52, 0.48], vertical_spacing=0.14,
-                        subplot_titles=("Availability of a weather window (whole year)",
-                                        f"Per month - Hs < {float(p.get('hs_month') or 2.0):g} m"))
-    colors = px.colors.sequential.Blues[3:] + ["#08306b"]
-    for k, lim in enumerate(limits):
-        av = waves.window_availability(series.hs, series.step_h, lim, windows)
-        fig.add_trace(go.Scatter(x=windows, y=av, mode="lines+markers", name=f"Hs < {lim:g} m",
-                                 line=dict(color=colors[min(k * len(colors) // max(len(limits), 1), len(colors) - 1)],
-                                           width=2.5),
-                                 hovertemplate=f"Hs < {lim:g} m, window %{{x}} h: %{{y:.1f}} % of the time"
-                                               "<extra></extra>"), row=1, col=1)
-    hs_m = float(p.get("hs_month") or 2.0)
-    month_av = waves.monthly_availability(series, hs_m, windows)
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.45, 0.55], vertical_spacing=0.14,
+                        subplot_titles=(f"Availability of a weather window with Hs < {lim:g} m (whole year)",
+                                        f"Per month - Hs < {lim:g} m (MWS limit)"))
+    av = waves.window_availability(series.hs, series.step_h, lim, windows)
+    fig.add_trace(go.Bar(x=windows, y=av, name=f"Hs < {lim:g} m", marker_color="#1f77b4",
+                         text=[f"{v:.0f}%" for v in av], textposition="outside", cliponaxis=False,
+                         hovertemplate=f"Hs < {lim:g} m, window %{{x}} h: %{{y:.1f}} % of the time<extra></extra>",
+                         showlegend=False), row=1, col=1)
+    month_av = waves.monthly_availability(series, lim, windows)
     fig.add_trace(go.Heatmap(z=month_av, x=[f"{w} h" for w in windows], y=MONTHS, colorscale="RdYlGn", zmin=0,
                              zmax=100, text=np.round(month_av).astype(int), texttemplate="%{text}",
                              textfont=dict(size=10), colorbar=dict(title="%", len=0.45, y=0.22),
@@ -1019,7 +1008,7 @@ def build_windows(p) -> go.Figure:
     fig.update_xaxes(title_text="Window length (h, steps of 6 h)", dtick=6, row=1, col=1)
     fig.update_yaxes(title_text="% of the time a window can start", range=[0, 100], row=1, col=1)
     fig.update_yaxes(autorange="reversed", row=2, col=1)
-    _layout_title(fig, ["<b>Weather windows</b> - " + where,
+    _layout_title(fig, [f"<b>Weather windows Hs < {lim:g} m (MWS)</b> - " + where,
                         f"Wave data {series.period}, every {series.step_h:g} h | window: Hs stays below the limit for "
                         f"the whole window length<br><sup>Availability = percentage of the time at which a window of "
                         f"that length can start (the rest of the time it is exceeded within the window).</sup>"], 900)

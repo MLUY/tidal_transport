@@ -71,7 +71,8 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   an indicative towing route and the **wave data locations** (red diamonds); full width, legend below,
   zoom with a box, the + / - buttons or the scroll wheel. Tab *Weather* (input) -> *Show*:
   *Weather windows per location* or *combined*: availability of a weather window (Hs below the limit for the whole
-  window) for window lengths in steps of 6 h per Hs limit, and per month for one Hs limit. Combined = all
+  window) for window lengths in steps of 6 h, for the selected **Hs limit (MWS)** (slider, default 2.5 m,
+  steps of 0.25 m), for the whole year and per month. Combined = all
   locations at the same moments, highest Hs counts.
   Wave data: csv files `<lon>E_<lat>N.csv` (or `<lon>E,<lat>N.csv`) with Year, Month, Day, Hour, Hs (2nd row units)
   in the repository root or `sample_data/waves`. Map
