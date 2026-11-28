@@ -99,16 +99,30 @@ def window_availability(hs: np.ndarray, step_h: float, limit: float, windows_h) 
     return np.array(out)
 
 
-def monthly_availability(series: WaveSeries, limit: float, windows_h) -> np.ndarray:
-    """12 x len(windows) availability (%) per calendar month (window start in that month)."""
-    months = pd.DatetimeIndex(series.time).month.to_numpy()
+def _remaining_calm(series: WaveSeries, limit: float) -> np.ndarray:
+    """Hours of Hs < limit from every time step onwards (0 when Hs >= limit or missing)."""
     calm = np.nan_to_num(series.hs, nan=np.inf) < limit
-    # remaining calm hours from every step
     remaining = np.zeros(len(calm))
     run = 0
     for k in range(len(calm) - 1, -1, -1):
         run = run + 1 if calm[k] else 0
         remaining[k] = run * series.step_h
+    return remaining
+
+
+def period_availability(series: WaveSeries, limit: float, windows_h, months) -> np.ndarray:
+    """Availability (%) per window length for windows starting in the given calendar months (1-12). A window that
+    starts in the period may run on after it (e.g. a tow starting at the end of September)."""
+    remaining = _remaining_calm(series, limit)
+    sel = np.isin(pd.DatetimeIndex(series.time).month.to_numpy(), list(months)) & ~np.isnan(series.hs)
+    n = max(int(sel.sum()), 1)
+    return np.array([100.0 * (remaining[sel] >= w - 1e-9).sum() / n for w in windows_h])
+
+
+def monthly_availability(series: WaveSeries, limit: float, windows_h) -> np.ndarray:
+    """12 x len(windows) availability (%) per calendar month (window start in that month)."""
+    months = pd.DatetimeIndex(series.time).month.to_numpy()
+    remaining = _remaining_calm(series, limit)
     valid = ~np.isnan(series.hs)
     out = np.zeros((12, len(windows_h)))
     for m in range(1, 13):
