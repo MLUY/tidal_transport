@@ -70,7 +70,7 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
 - **Weather** (view, was Towing): by default the grey map of Korea with the fabrication yard, the marshalling port,
   an indicative towing route and the **wave data locations** (red diamonds); full width, legend below,
   zoom with a box, the + / - buttons or the scroll wheel. Tab *Weather* (input) -> *Show*:
-  *Weather windows per location* or *combined*: availability of a weather window (Hs below the limit for the whole
+  *Weather windows* for the selected *Wave data files* (one file = that location, several = combined): availability of a weather window (Hs below the limit for the whole
   window) for window lengths in steps of 6 h, for the selected **Hs limit (MWS)** (slider, default 2.5 m,
   steps of 0.25 m), for the whole year and per month. Combined = all
   locations at the same moments, highest Hs counts.

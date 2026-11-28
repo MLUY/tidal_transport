@@ -145,12 +145,11 @@ def _sailing_text(params, **kwargs) -> str:
     return f"{hrs:.1f} h ({hrs / 24:.1f} days) each way"
 
 
-WAVE_MAP, WAVE_ONE, WAVE_ALL = "Map with wave data locations", "Weather windows per location", \
-    "Weather windows combined"
+WAVE_MAP, WAVE_WINDOWS = "Map with wave data locations", "Weather windows"
 CHART_ALL, CHART_DETAIL, CHART_CYCLES = "Complete project", "Detail of one trip", "Barge cycles"
 OPT_RANGE_DAYS = 60
 UI_ONLY = {"chart_mode", "detail_barge", "detail_trip", "optimise_result", "yard_name", "yard_lat", "yard_lon",
-           "port_name", "port_lat", "port_lon", "wave_view", "wave_location", "hs_limit", "max_window"}        # do not change the planning      # display choices: no new calculation
+           "port_name", "port_lat", "port_lon", "wave_view", "wave_files", "hs_limit", "max_window"}        # do not change the planning      # display choices: no new calculation
 
 
 def _wave_options(params, **kwargs) -> list:
@@ -329,9 +328,13 @@ class Parametrization(vkt.Parametrization):
         "their position (e.g. 125.667E_34.500N.csv). Weather window: Hs stays below the limit for at least the "
         "window length; availability = % of the time such a window can start. Combined: all locations at the same "
         "moments, the highest Hs counts. These settings do not change the planning.*")
-    weather.waves.wave_view = vkt.OptionField("Show", options=[WAVE_MAP, WAVE_ONE, WAVE_ALL], default=WAVE_MAP, flex=100)
-    weather.waves.wave_location = vkt.OptionField("Location", options=_wave_options, flex=100,
-                                            visible=vkt.IsEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_ONE))
+    weather.waves.wave_view = vkt.OptionField("Show", options=[WAVE_MAP, WAVE_WINDOWS], default=WAVE_MAP, flex=100,
+                                              variant="radio-inline")
+    weather.waves.wave_files = vkt.MultiSelectField(
+        "Wave data files", options=_wave_options, default=[f.stem for f in waves.wave_files()], flex=100,
+        visible=vkt.IsEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_WINDOWS),
+        description="One file: weather windows at that location. Several files: combined - all selected locations "
+                    "at the same moments, the highest Hs counts.")
     weather.waves.hs_limit = vkt.NumberField(
         "Hs limit (MWS)", suffix="m", default=2.5, min=0.25, max=5.0, step=0.25, variant="slider", flex=100,
         visible=vkt.IsNotEqual(vkt.Lookup("weather.waves.wave_view"), WAVE_MAP),
@@ -978,14 +981,16 @@ def build_windows(p) -> go.Figure:
     files = waves.wave_files()
     if not files:
         raise vkt.UserError("No wave data files found (csv named like 125.667E_34.500N.csv).")
-    if p.get("wave_view") == WAVE_ONE:
-        name = p.get("wave_location") or files[0].stem
-        path = next((f for f in files if f.stem == name), files[0])
-        series = waves.load(path)
+    chosen = [f for f in files if f.stem in (p.get("wave_files") or [])]
+    if not chosen:
+        raise vkt.UserError("Select one or more wave data files (tab Weather, Wave data).")
+    if len(chosen) == 1:
+        series = waves.load(chosen[0])
         where = f"{series.label} ({series.lat:.3f}°N, {series.lon:.3f}°E)"
     else:
-        series = waves.combined(waves.all_series())
-        where = f"all {len(files)} locations combined (highest Hs at each moment)"
+        series = waves.combined([waves.load(f) for f in chosen])
+        where = (f"{'all ' if len(chosen) == len(files) else ''}{len(chosen)} locations combined (highest Hs at each "
+                 f"moment): " + ", ".join(f.stem for f in chosen))
     lim = round(float(p.get("hs_limit") or 2.5) * 4) / 4          # MWS limit, steps of 0.25 m
     if lim <= 0:
         raise vkt.UserError("Hs limit (MWS) must be more than 0 m.")
@@ -1149,7 +1154,7 @@ class TransportPlan(vkt.Controller):
     @vkt.PlotlyView("Weather", duration_guess=2)
     def weather_view(self, params, **kwargs):
         p = _flat(params)
-        if p.get("wave_view") in (WAVE_ONE, WAVE_ALL):
+        if p.get("wave_view") == WAVE_WINDOWS:
             return vkt.PlotlyResult(build_windows(p).to_json())
         fig = json.loads(build_towing(p).to_json())
         fig["config"] = {"scrollZoom": True, "displayModeBar": True}     # zoom with the scroll wheel (if supported)
