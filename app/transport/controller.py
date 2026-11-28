@@ -15,7 +15,8 @@ from .schedule import (CAT_ALLOW, CAT_WAIT_FAB, CAT_BERTH_FAB, CAT_BERTH_MP, CAT
                        CAT_LOADIN, CAT_RETURN, CAT_SAIL, CAT_TIDE, CAT_WAIT_MP, DOUBLE, READY_EARLIEST, READY_LATEST,
                        SINGLE, CAT_WEATHER, DEFAULT_WORKABILITY, MONTHS, Barge, CargoClass, Cycle, Monopile,
                        plan_transport)
-from .export import build_activities_csv, build_cycles_excel, build_html_report, build_planning_excel
+from .export import (build_activities_csv, build_cycles_excel, build_html_report, build_inputs_excel,
+                     build_planning_excel)
 from .tide import PlanningError, load_tide
 from . import waves
 
@@ -386,6 +387,10 @@ class Parametrization(vkt.Parametrization):
     # ---------------- Export: downloads of the planning
     export = vkt.Tab("Export")
     export.text = vkt.Text("### Export\n*Download the current planning (all inputs as they are now).*")
+    export.inputs_xlsx = vkt.DownloadButton("Inputs (Excel)", method="download_inputs", longpoll=True, flex=100)
+    export.inputs_note = vkt.Text("*Only the inputs the planning is based on (overview Tab | Input | Value | Unit, "
+                                  "barges, cargo classes, tide levels, monopile schedule, weather workability, tidal "
+                                  "data) - e.g. to check or reproduce the planning.*")
     export.planning_xlsx = vkt.DownloadButton("Complete planning (Excel)", method="download_planning", longpoll=True,
                                               flex=100)
     export.planning_note = vkt.Text("*Sheets: Summary (results and inputs), Barge cycles, Monopiles, Activities, "
@@ -569,6 +574,64 @@ def optimise_start_dates(barges, kwargs, range_days: int = OPT_RANGE_DAYS):
         if not improved:
             break
     return current, best_res, first_res
+
+
+def _input_sheets(p) -> list:
+    """All planning inputs as sheets (title, header, rows) for the inputs export."""
+    fleet = _fleet(p)
+    starts = {str(r.name or "").strip(): r.start for r in (p.starts or [])}
+    over = [
+        ("Input", "Barge cycle", "Towing distance", p.distance_nm, "nm"),
+        ("Input", "Barge cycle", "Average towing speed", p.speed_kn, "kn"),
+        ("Input", "Barge cycle", "Sailing time each way (calculated)",
+         round(float(p.distance_nm or 0) / float(p.speed_kn), 2) if p.speed_kn else "", "h"),
+        ("Input", "Barge cycle", "Load-out at fabricator per MP", p.loadout_h, "h"),
+        ("Input", "Barge cycle", "Port departure fabricator", p.dep_fab_h, "h"),
+        ("Input", "Barge cycle", "Port entry", p.entry_h, "h"),
+        ("Input", "Barge cycle", "Load-in duration per MP (tidal window)", p.loadin_h, "h"),
+        ("Input", "Barge cycle", "General load-in time allowance", p.allowance_h, "h"),
+        ("Input", "Barge cycle", "Port departure", p.dep_h, "h"),
+        ("Fabricator", "Fabrication yard", "Name", p.yard_name, ""),
+        ("Fabricator", "Fabrication yard", "Latitude", p.yard_lat, "°N"),
+        ("Fabricator", "Fabrication yard", "Longitude", p.yard_lon, "°E"),
+        ("Fabricator", "Fabrication yard", "Storage capacity", p.yard_capacity, "MP"),
+        ("Fabricator", "Fabrication yard", "Number of load-out berths", p.fab_berths, ""),
+        ("Fabricator", "Fabrication yard", "Monopile produced and ready for load-out on", p.ready, ""),
+        ("Marshalling port", "Marshalling port", "Name", p.port_name, ""),
+        ("Marshalling port", "Marshalling port", "Latitude", p.port_lat, "°N"),
+        ("Marshalling port", "Marshalling port", "Longitude", p.port_lon, "°E"),
+        ("Marshalling port", "Marshalling port", "Number of load-in berths", p.port_berths, ""),
+        ("Marshalling port", "Tide", "Tidal data",
+         p.tide_file.filename if p.tide_file else "default: Gunsan 2026 hourly (repeated for other years)", ""),
+        ("Weather", "Sailing", "Workability per month", "see sheet Weather", "%"),
+        ("Weather", "Sailing", "Notes - basis of the workability", p.get("workability_notes") or "", ""),
+        ("Planning", "Barges", "Barge start dates", "see sheet Barges", ""),
+        ("Planning", "Barges", "Double barge max wait", p.max_wait_second, "h"),
+    ]
+    overview = ("Inputs", ["Tab", "Group", "Input", "Value", "Unit"], [list(r) for r in over])
+    barges = ("Barges", ["Barge", "Configuration", "Start (dd/mm/yyyy)"],
+              [[n, c, starts.get(n, "")] for n, c in fleet])
+    classes = ("Cargo classes", ["Code", "From (t)", "To (t)"],
+               [[r.name, r.from_t, r.to_t] for r in (p.classes or [])])
+    n_d = sum(c == DOUBLE for _, c in fleet)
+    doubles = [n for n, c in fleet if c == DOUBLE]
+    header = ["Code"] + [f"sb{k + 1} = {n} (single)" for k, (n, _) in enumerate(fleet)] + \
+             [f"db{k + 1} = {n} (double)" for k, n in enumerate(doubles)]
+    rows = []
+    for r in (p.get(_table_name(len(fleet), n_d)) or []):
+        rows.append([r.code] + [r.get(S_COLS[k]) for k in range(len(fleet))] + [r.get(D_COLS[k]) for k in range(n_d)])
+    levels = ("Tide levels (cm)", header, rows)
+    mps = ("Monopile schedule", ["No.", "Location", "Weight (t)", "Earliest (dd/mm/yyyy)", "Latest (dd/mm/yyyy)"],
+           [[r.number, r.name, r.weight_t, r.earliest, r.latest] for r in (p.monopiles or []) if r.name or r.weight_t])
+    weather = ("Weather", ["Month", "Workability (%)"], [[r.month, r.pct] for r in (p.workability or [])])
+    # tidal data as used (uploaded file or the default), time and level
+    try:
+        tide = load_tide(_tide_bytes(p))
+        tide_rows = [[t.to_pydatetime(), float(c)] for t, c in zip(tide.df["time"], tide.df["cm"])]
+    except PlanningError:
+        tide_rows = []
+    tide_sheet = ("Tidal data", ["Time", "Tide level (cm above CD)"], tide_rows)
+    return [overview, barges, classes, levels, mps, weather, tide_sheet]
 
 
 def _export_inputs(p) -> list:
@@ -1109,6 +1172,12 @@ class TransportPlan(vkt.Controller):
     def download_activities(self, params, **kwargs):
         return vkt.DownloadResult(build_activities_csv(_schedule(params)),
                                   self._file_name(params, "csv").replace("tidal_transport", "activities"))
+
+    def download_inputs(self, params, **kwargs):
+        p = _flat(params)
+        res = _schedule(params)
+        name = f"inputs_{res.start:%Y%m%d}_{len(res.monopiles)}MP_{len(res.trips)}trips.xlsx"
+        return vkt.DownloadResult(build_inputs_excel(_input_sheets(p)), name)
 
     def download_report(self, params, **kwargs):
         res = _schedule(params)

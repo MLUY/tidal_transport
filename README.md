@@ -32,6 +32,9 @@ tidal restrictions for the load-in at the marshalling port. Specification: `inst
   in the best dates (result in *Last optimisation*); *Double barge max wait* (max. wait at the fabricator for the 2nd monopile).
 
 - **Export** (last tab): downloads of the current planning:
+  - *Inputs (Excel)*: only the inputs the planning is based on (overview Tab | Group | Input | Value | Unit,
+    barges with start dates, cargo classes, tide levels, monopile schedule, weather workability with notes,
+    tidal data as used) - to check or reproduce a planning;
   - *Complete planning (Excel)*: Summary (results and inputs), Barge cycles, Monopiles, Activities, Load-ins (tide
     at start / lowest / highest during each load-in), Stock, Tide (hourly);
   - *Barge cycles (Excel)*: one row per trip with the hours per activity, plus averages per barge;

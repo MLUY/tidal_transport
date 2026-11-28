@@ -222,3 +222,22 @@ def build_html_report(title: str, figures: list) -> bytes:
                      + "</div>")
     parts.append("</body></html>")
     return "".join(parts).encode("utf-8")
+
+
+def build_inputs_excel(sheets: list) -> bytes:
+    """Inputs only, as given to the planning. sheets: [(title, header, rows)]; the first sheet is the overview of
+    all single inputs (Tab | Input | Value | Unit)."""
+    wb = Workbook()
+    wb.remove(wb.active)
+    for title, header, rows in sheets:
+        widths = {h: 28 for h in header}
+        widths.update({"Input": 46, "Value": 40, "Tab": 18, "Unit": 10, "Notes": 80})
+        ws = _sheet(wb, title, header, rows, widths=widths)
+        for row in ws.iter_rows(min_row=2):
+            for c in row:
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+                if hasattr(c.value, "hour"):
+                    c.number_format = DT
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
